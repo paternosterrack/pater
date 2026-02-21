@@ -62,6 +62,10 @@ enum Commands {
         plugin: String,
     },
     List,
+    Capabilities {
+        #[arg(long, value_enum, default_value_t = AdapterTarget::All)]
+        agent: AdapterTarget,
+    },
     Hook {
         #[command(subcommand)]
         command: HookCommands,
@@ -373,8 +377,61 @@ struct PolicyGeneral {
     allow_external_reference_plugins: Vec<String>,
 }
 
-fn main() -> anyhow::Result<()> {
+fn main() {
     let cli = Cli::parse();
+    let json = cli.json;
+    if let Err(e) = run(cli) {
+        if json {
+            let out = serde_json::json!({
+                "ok": false,
+                "error": {
+                    "code": map_error_code(&e.to_string()),
+                    "message": e.to_string(),
+                    "hint": error_hint(&e.to_string()),
+                    "retryable": false
+                },
+                "meta": {"version": "v1"}
+            });
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&out).unwrap_or_else(|_| "{\"ok\":false}".to_string())
+            );
+        } else {
+            eprintln!("error: {}", e);
+        }
+        std::process::exit(1);
+    }
+}
+
+fn map_error_code(msg: &str) -> &'static str {
+    let m = msg.to_ascii_lowercase();
+    if m.contains("policy") {
+        "POLICY_DENY"
+    } else if m.contains("signature") {
+        "SIGNATURE_INVALID"
+    } else if m.contains("not found") {
+        "NOT_FOUND"
+    } else if m.contains("permission") {
+        "PERMISSION_DELTA_BLOCKED"
+    } else {
+        "INTERNAL_ERROR"
+    }
+}
+
+fn error_hint(msg: &str) -> &'static str {
+    let m = msg.to_ascii_lowercase();
+    if m.contains("signature") {
+        "run `pater trust init` and verify marketplace.sig"
+    } else if m.contains("policy") {
+        "review ~/.config/pater/policy.toml"
+    } else if m.contains("not found") {
+        "check plugin/marketplace name and run `pater search`"
+    } else {
+        "run `pater --json check` for diagnostics"
+    }
+}
+
+fn run(cli: Cli) -> anyhow::Result<()> {
     let mut state = load_state()?;
     let policy = load_policy()?;
 
@@ -852,6 +909,28 @@ fn main() -> anyhow::Result<()> {
                 format!("{}\t{}\t{:?}", p.name, p.marketplace, p.scope)
             })?;
         }
+        Commands::Capabilities { agent } => {
+            let smoke = adapter_smoke(&state, agent)?;
+            let report = CapabilitiesReport {
+                installed_count: state.installed.len(),
+                installed_plugins: state.installed.iter().map(|p| p.name.clone()).collect(),
+                adapter_smoke: smoke,
+            };
+            if cli.json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&JsonOut {
+                        ok: true,
+                        data: report
+                    })?
+                );
+            } else {
+                println!("installed: {}", report.installed_count);
+                for p in report.installed_plugins {
+                    println!("- {}", p);
+                }
+            }
+        }
         Commands::Hook { command } => match command {
             HookCommands::List { agent } => {
                 let hooks = rack::list_hooks(&default_market, agent.as_deref());
@@ -1027,6 +1106,13 @@ struct DoctorReport {
     smoke: Vec<SmokeReport>,
     configs: Vec<CheckItem>,
     wrappers: Vec<CheckItem>,
+}
+
+#[derive(Serialize)]
+struct CapabilitiesReport {
+    installed_count: usize,
+    installed_plugins: Vec<String>,
+    adapter_smoke: Vec<SmokeReport>,
 }
 
 #[derive(Serialize)]

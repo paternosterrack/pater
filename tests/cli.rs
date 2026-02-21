@@ -126,6 +126,9 @@ fn cli_core_commands_and_options_success_paths() {
     assert!(out.contains("typescript-lsp"));
     assert!(out.contains("pyright-lsp"));
 
+    let out = run(&home, &["--json", "capabilities", "--agent", "all"]);
+    assert!(out.contains("installed_count"));
+
     // update command + option
     let out = run(&home, &["update"]);
     assert!(out.contains("up_to_date") || out.contains("updated"));
