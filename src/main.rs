@@ -34,6 +34,12 @@ enum Commands {
         #[arg(long)]
         context: Option<String>,
     },
+    Plan {
+        #[arg(long)]
+        intent: String,
+        #[arg(long, value_enum, default_value_t = AdapterTarget::All)]
+        agent: AdapterTarget,
+    },
     Show {
         plugin: String,
     },
@@ -79,6 +85,10 @@ enum Commands {
         #[command(subcommand)]
         command: TrustCommands,
     },
+    Policy {
+        #[command(subcommand)]
+        command: PolicyCommands,
+    },
     Rack {
         #[command(subcommand)]
         command: RackCommands,
@@ -86,6 +96,12 @@ enum Commands {
     Author {
         #[command(subcommand)]
         command: AuthorCommands,
+    },
+    Ensure {
+        #[arg(long)]
+        intent: String,
+        #[arg(long, value_enum, default_value_t = AdapterTarget::All)]
+        agent: AdapterTarget,
     },
     Check,
 }
@@ -110,6 +126,15 @@ enum TrustCommands {
     Init,
     List,
     Status,
+}
+
+#[derive(Subcommand, Debug)]
+enum PolicyCommands {
+    Eval {
+        plugin: String,
+        #[arg(long, value_enum, default_value_t = AdapterTarget::All)]
+        agent: AdapterTarget,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -704,6 +729,29 @@ fn run(cli: Cli) -> anyhow::Result<()> {
                 format!("{}\t{}\t{}", r.marketplace, r.plugin, r.reason)
             })?;
         }
+        Commands::Plan { intent, agent } => {
+            let items = discover_across(&all_markets, Some(&intent), &policy)?;
+            let recs = recommend_plugins(items, Some(&intent));
+            let report = PlanReport {
+                intent,
+                agent: format!("{:?}", agent).to_lowercase(),
+                recommendations: recs,
+            };
+            if cli.json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&JsonOut {
+                        ok: true,
+                        data: report
+                    })?
+                );
+            } else {
+                println!("plan for {}", report.agent);
+                for r in report.recommendations {
+                    println!("{}\t{}\t{}", r.marketplace, r.plugin, r.reason);
+                }
+            }
+        }
         Commands::Show { plugin } => {
             let (name, market) = parse_target(&plugin);
             let p = show_plugin(&all_markets, &name, market.as_deref(), &policy)?;
@@ -1001,6 +1049,46 @@ fn run(cli: Cli) -> anyhow::Result<()> {
                 }
             }
         },
+        Commands::Ensure { intent, agent } => {
+            let items = discover_across(&all_markets, Some(&intent), &policy)?;
+            let recs = recommend_plugins(items, Some(&intent));
+            let top = recs
+                .first()
+                .ok_or_else(|| anyhow::anyhow!("no plugin recommendation for intent"))?;
+            let target = format!("{}@{}", top.plugin, top.marketplace);
+            let (name, market) = parse_target(&target);
+            let p = show_plugin(&all_markets, &name, market.as_deref(), &policy)?;
+            enforce_policy_for_plugin(&policy, &p)?;
+            let source_path = rack::resolve_plugin_path(&p.marketplace_source, &p.source)?;
+            let local_path = materialize_plugin(&p.name, &source_path)?;
+            let entry = InstalledPlugin {
+                name: p.name.clone(),
+                marketplace: p.marketplace.clone(),
+                marketplace_source: p.marketplace_source.clone(),
+                source: p.source.clone(),
+                local_path: local_path.to_string_lossy().to_string(),
+                version: p.version.clone(),
+                permissions: p.permissions.clone(),
+                scope: InstallScope::User,
+            };
+            upsert_installed(&mut state, entry.clone());
+            save_state(&state)?;
+            save_lockfile(&state)?;
+            sync_installed(&state, agent.clone())?;
+            let smoke = adapter_smoke(&state, agent)?;
+            if cli.json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&JsonOut {
+                        ok: true,
+                        data: serde_json::json!({"intent": intent, "selected": entry, "smoke": smoke})
+                    })?
+                );
+            } else {
+                println!("ensured capability for intent: {}", intent);
+                println!("selected: {}", entry.name);
+            }
+        }
         Commands::Check => {
             let trust = TrustStatus {
                 require_signed_marketplace: policy.general.require_signed_marketplace,
@@ -1044,6 +1132,29 @@ fn run(cli: Cli) -> anyhow::Result<()> {
                 format!("release-check: {}", r.overall)
             })?;
         }
+        Commands::Policy { command } => match command {
+            PolicyCommands::Eval { plugin, agent } => {
+                let (name, market) = parse_target(&plugin);
+                let p = show_plugin(&all_markets, &name, market.as_deref(), &policy)?;
+                let eval = policy_eval_for_plugin(&policy, &p, agent.clone());
+                if cli.json {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&JsonOut {
+                            ok: true,
+                            data: eval
+                        })?
+                    );
+                } else {
+                    println!(
+                        "{}\t{}",
+                        eval.plugin,
+                        if eval.allowed { "allowed" } else { "denied" }
+                    );
+                    println!("reason: {}", eval.reason);
+                }
+            }
+        },
         Commands::Trust { .. } => unreachable!("handled before marketplace loading"),
         Commands::Rack { .. } => unreachable!("handled before marketplace loading"),
         Commands::Author { .. } => unreachable!("handled before marketplace loading"),
@@ -1113,6 +1224,21 @@ struct CapabilitiesReport {
     installed_count: usize,
     installed_plugins: Vec<String>,
     adapter_smoke: Vec<SmokeReport>,
+}
+
+#[derive(Serialize)]
+struct PolicyEvalReport {
+    plugin: String,
+    agent: String,
+    allowed: bool,
+    reason: String,
+}
+
+#[derive(Serialize)]
+struct PlanReport {
+    intent: String,
+    agent: String,
+    recommendations: Vec<Recommendation>,
 }
 
 #[derive(Serialize)]
@@ -1455,6 +1581,27 @@ fn checked_load_marketplace(
         }
     }
     rack::load_marketplace(source)
+}
+
+fn policy_eval_for_plugin(
+    policy: &PolicyFile,
+    p: &DiscoverItem,
+    agent: AdapterTarget,
+) -> PolicyEvalReport {
+    match enforce_policy_for_plugin(policy, p) {
+        Ok(_) => PolicyEvalReport {
+            plugin: p.name.clone(),
+            agent: format!("{:?}", agent).to_lowercase(),
+            allowed: true,
+            reason: "allowed".to_string(),
+        },
+        Err(e) => PolicyEvalReport {
+            plugin: p.name.clone(),
+            agent: format!("{:?}", agent).to_lowercase(),
+            allowed: false,
+            reason: e.to_string(),
+        },
+    }
 }
 
 fn enforce_policy_for_plugin(policy: &PolicyFile, p: &DiscoverItem) -> anyhow::Result<()> {

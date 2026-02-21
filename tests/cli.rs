@@ -65,6 +65,20 @@ fn cli_core_commands_and_options_success_paths() {
         &[
             "--marketplace",
             "../rack",
+            "--json",
+            "plan",
+            "--intent",
+            "typescript",
+            "--agent",
+            "all",
+        ],
+    );
+    assert!(out.contains("recommendations"));
+    let out = run(
+        &home,
+        &[
+            "--marketplace",
+            "../rack",
             "show",
             "commit-commands@paternoster-rack",
         ],
@@ -128,6 +142,36 @@ fn cli_core_commands_and_options_success_paths() {
 
     let out = run(&home, &["--json", "capabilities", "--agent", "all"]);
     assert!(out.contains("installed_count"));
+
+    let out = run(
+        &home,
+        &[
+            "--marketplace",
+            "../rack",
+            "--json",
+            "policy",
+            "eval",
+            "commit-commands@paternoster-rack",
+            "--agent",
+            "all",
+        ],
+    );
+    assert!(out.contains("allowed"));
+
+    let out = run(
+        &home,
+        &[
+            "--marketplace",
+            "../rack",
+            "--json",
+            "ensure",
+            "--intent",
+            "typescript",
+            "--agent",
+            "all",
+        ],
+    );
+    assert!(out.contains("selected"));
 
     // update command + option
     let out = run(&home, &["update"]);

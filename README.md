@@ -65,12 +65,16 @@ pater remote update
 # lifecycle
 pater search [query]
 pater recommend --context "task context for agent"
+pater plan --intent "task" --agent all|claude|codex|openclaw
 pater show <plugin[@marketplace]>
 pater install <plugin@marketplace> [--scope user|project|local]
 pater apply <plugin@marketplace> --target-adapter all|claude|codex|openclaw [--scope user|project|local]
+pater ensure --intent "task" --agent all|claude|codex|openclaw
 pater update [plugin]
 pater remove <plugin>
 pater list
+pater capabilities --agent all|claude|codex|openclaw
+pater policy eval <plugin[@marketplace]> --agent all|claude|codex|openclaw
 
 # authoring (all entities belong to a plugin)
 pater author plugin create <plugin> --rack-dir ../rack --description "..."
