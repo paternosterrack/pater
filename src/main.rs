@@ -64,6 +64,7 @@ enum Commands {
         #[command(subcommand)]
         command: TrustCommands,
     },
+    ReleaseCheck,
 }
 
 #[derive(Subcommand, Debug)]
@@ -492,6 +493,38 @@ fn main() -> anyhow::Result<()> {
                 }
             }
         },
+        Commands::ReleaseCheck => {
+            let trust = TrustStatus {
+                require_signed_marketplace: policy.general.require_signed_marketplace,
+                trusted_key_count: list_pubkeys()?.len(),
+                default_marketplace: DEFAULT_MARKETPLACE_SOURCE.to_string(),
+                default_marketplace_signature_ok: verify_marketplace_signature(
+                    DEFAULT_MARKETPLACE_SOURCE,
+                )
+                .unwrap_or(false),
+            };
+            let doctor = adapter_doctor(&state)?;
+            let rack_license_audit = run_rack_license_audit();
+            let overall = if trust.default_marketplace_signature_ok
+                && doctor.overall == "ok"
+                && rack_license_audit == "ok"
+            {
+                "ok"
+            } else {
+                "needs_attention"
+            }
+            .to_string();
+
+            let report = ReleaseCheckReport {
+                overall,
+                trust,
+                doctor,
+                rack_license_audit,
+            };
+            print_one(cli.json, report, |r| {
+                format!("release-check: {}", r.overall)
+            })?;
+        }
         Commands::Trust { .. } => unreachable!("handled before marketplace loading"),
     }
 
@@ -547,6 +580,14 @@ struct TrustStatus {
     trusted_key_count: usize,
     default_marketplace: String,
     default_marketplace_signature_ok: bool,
+}
+
+#[derive(Serialize)]
+struct ReleaseCheckReport {
+    overall: String,
+    trust: TrustStatus,
+    doctor: DoctorReport,
+    rack_license_audit: String,
 }
 
 fn update_plugins(
@@ -898,6 +939,23 @@ fn classify_plugin_license(p: &DiscoverItem) -> anyhow::Result<&'static str> {
     }
 
     Ok("unknown")
+}
+
+fn run_rack_license_audit() -> String {
+    let default_rack = PathBuf::from("../rack");
+    let script = default_rack.join("scripts/license_audit.py");
+    if !script.exists() {
+        return "missing".to_string();
+    }
+    let status = std::process::Command::new("python3")
+        .arg(script)
+        .current_dir(default_rack)
+        .status();
+    match status {
+        Ok(s) if s.success() => "ok".to_string(),
+        Ok(_) => "failed".to_string(),
+        Err(_) => "error".to_string(),
+    }
 }
 
 fn audit(action: &str, data: serde_json::Value) {
