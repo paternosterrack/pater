@@ -30,11 +30,22 @@ enum Commands {
     Search {
         query: Option<String>,
     },
+    Recommend {
+        #[arg(long)]
+        context: Option<String>,
+    },
     Show {
         plugin: String,
     },
     Install {
         target: String,
+        #[arg(long, value_enum, default_value_t = InstallScope::User)]
+        scope: InstallScope,
+    },
+    Apply {
+        target: String,
+        #[arg(long, value_enum, default_value_t = AdapterTarget::All)]
+        target_adapter: AdapterTarget,
         #[arg(long, value_enum, default_value_t = InstallScope::User)]
         scope: InstallScope,
     },
@@ -629,6 +640,13 @@ fn main() -> anyhow::Result<()> {
                 format!("{}\t{}\t{}", p.marketplace, p.name, p.description)
             })?;
         }
+        Commands::Recommend { context } => {
+            let items = discover_across(&all_markets, context.as_deref(), &policy)?;
+            let recs = recommend_plugins(items, context.as_deref());
+            print_out(cli.json, &recs, |r| {
+                format!("{}\t{}\t{}", r.marketplace, r.plugin, r.reason)
+            })?;
+        }
         Commands::Show { plugin } => {
             let (name, market) = parse_target(&plugin);
             let p = show_plugin(&all_markets, &name, market.as_deref(), &policy)?;
@@ -686,6 +704,43 @@ fn main() -> anyhow::Result<()> {
             } else {
                 println!("installed {}@{}", entry.name, entry.marketplace);
                 println!("adapter sync complete (claude/codex/openclaw)");
+            }
+        }
+        Commands::Apply {
+            target,
+            target_adapter,
+            scope,
+        } => {
+            let (name, market) = parse_target(&target);
+            let p = show_plugin(&all_markets, &name, market.as_deref(), &policy)?;
+            enforce_policy_for_plugin(&policy, &p)?;
+            let source_path = rack::resolve_plugin_path(&p.marketplace_source, &p.source)?;
+            let local_path = materialize_plugin(&p.name, &source_path)?;
+            let entry = InstalledPlugin {
+                name: p.name.clone(),
+                marketplace: p.marketplace.clone(),
+                marketplace_source: p.marketplace_source.clone(),
+                source: p.source.clone(),
+                local_path: local_path.to_string_lossy().to_string(),
+                version: p.version.clone(),
+                permissions: p.permissions.clone(),
+                scope,
+            };
+            upsert_installed(&mut state, entry.clone());
+            save_state(&state)?;
+            save_lockfile(&state)?;
+            sync_installed(&state, target_adapter.clone())?;
+            let smoke = adapter_smoke(&state, target_adapter.clone())?;
+            if cli.json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&JsonOut {
+                        ok: true,
+                        data: serde_json::json!({"installed": entry, "smoke": smoke})
+                    })?
+                );
+            } else {
+                println!("applied {} and synced adapters", entry.name);
             }
         }
         Commands::Adapter { command } => match command {
@@ -931,6 +986,17 @@ struct DiscoverItem {
     permissions: Vec<String>,
 }
 
+#[derive(Serialize, Clone)]
+struct Recommendation {
+    plugin: String,
+    marketplace: String,
+    score: i32,
+    reason: String,
+    permission_count: usize,
+    distribution: Option<String>,
+    license_status: Option<String>,
+}
+
 #[derive(Serialize)]
 struct UpdateReport {
     name: String,
@@ -1107,6 +1173,47 @@ fn discover_across(
         }
     }
     Ok(out)
+}
+
+fn recommend_plugins(items: Vec<DiscoverItem>, context: Option<&str>) -> Vec<Recommendation> {
+    let ctx = context.unwrap_or("").to_ascii_lowercase();
+    let mut out: Vec<Recommendation> = items
+        .into_iter()
+        .map(|p| {
+            let mut score = 0;
+            let mut reason = String::from("baseline relevance");
+            if !ctx.is_empty() {
+                if p.name.to_ascii_lowercase().contains(&ctx) {
+                    score += 50;
+                    reason = "name matches context".to_string();
+                }
+                if p.description.to_ascii_lowercase().contains(&ctx) {
+                    score += 30;
+                    reason = "description matches context".to_string();
+                }
+                for perm in &p.permissions {
+                    if ctx.contains(&perm.to_ascii_lowercase()) {
+                        score += 10;
+                    }
+                }
+            }
+            if p.distribution.as_deref() == Some("external-reference-only") {
+                score -= 20;
+            }
+            Recommendation {
+                plugin: p.name,
+                marketplace: p.marketplace,
+                score,
+                reason,
+                permission_count: p.permissions.len(),
+                distribution: p.distribution,
+                license_status: p.license_status,
+            }
+        })
+        .collect();
+    out.sort_by(|a, b| b.score.cmp(&a.score).then(a.plugin.cmp(&b.plugin)));
+    out.truncate(10);
+    out
 }
 
 fn show_plugin(

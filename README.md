@@ -64,8 +64,10 @@ pater remote update
 
 # lifecycle
 pater search [query]
+pater recommend --context "task context for agent"
 pater show <plugin[@marketplace]>
 pater install <plugin@marketplace> [--scope user|project|local]
+pater apply <plugin@marketplace> --target-adapter all|claude|codex|openclaw [--scope user|project|local]
 pater update [plugin]
 pater remove <plugin>
 pater list

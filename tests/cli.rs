@@ -40,7 +40,7 @@ fn cli_core_commands_and_options_success_paths() {
     let out = run(&home, &["remote", "update"]);
     assert!(out.contains("updated"));
 
-    // discovery/show/validate/hooks
+    // discovery/recommend/show/validate/hooks
     let out = run(&home, &["--marketplace", "../rack", "validate"]);
     assert!(out.contains("marketplace valid"));
     let out = run(
@@ -48,6 +48,18 @@ fn cli_core_commands_and_options_success_paths() {
         &["--marketplace", "../rack", "--json", "search", "commit"],
     );
     assert!(out.contains("commit-commands"));
+    let out = run(
+        &home,
+        &[
+            "--marketplace",
+            "../rack",
+            "--json",
+            "recommend",
+            "--context",
+            "typescript",
+        ],
+    );
+    assert!(out.contains("plugin"));
     let out = run(
         &home,
         &[
@@ -92,6 +104,20 @@ fn cli_core_commands_and_options_success_paths() {
             "pyright-lsp@paternoster-rack",
             "--scope",
             "local",
+        ],
+    );
+
+    run(
+        &home,
+        &[
+            "--marketplace",
+            "../rack",
+            "apply",
+            "commit-commands@paternoster-rack",
+            "--target-adapter",
+            "all",
+            "--scope",
+            "user",
         ],
     );
 
