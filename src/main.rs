@@ -596,6 +596,8 @@ fn write_activation_shim(target: &AdapterTarget, plugin_dirs: &[String]) -> anyh
                 root.join("pater.plugins.json"),
                 serde_json::to_string_pretty(&data)?,
             )?;
+            patch_claude_config(&root, plugin_dirs)?;
+            write_wrapper(&home, "pater-claude", "claude", plugin_dirs)?;
         }
         AdapterTarget::Codex => {
             let root = PathBuf::from(&home).join(".codex");
@@ -610,6 +612,8 @@ fn write_activation_shim(target: &AdapterTarget, plugin_dirs: &[String]) -> anyh
                 root.join("pater.plugins.json"),
                 serde_json::to_string_pretty(&data)?,
             )?;
+            patch_codex_config(&root, plugin_dirs)?;
+            write_wrapper(&home, "pater-codex", "codex", plugin_dirs)?;
         }
         AdapterTarget::Openclaw => {
             let root = PathBuf::from(&home)
@@ -627,8 +631,66 @@ fn write_activation_shim(target: &AdapterTarget, plugin_dirs: &[String]) -> anyh
                 root.join(".pater-index.json"),
                 serde_json::to_string_pretty(&data)?,
             )?;
+            write_wrapper(&home, "pater-openclaw", "openclaw", plugin_dirs)?;
         }
         AdapterTarget::All => {}
+    }
+    Ok(())
+}
+
+fn patch_claude_config(root: &std::path::Path, plugin_dirs: &[String]) -> anyhow::Result<()> {
+    let cfg = root.join("settings.json");
+    let mut v = if cfg.exists() {
+        serde_json::from_str::<serde_json::Value>(&std::fs::read_to_string(&cfg)?)
+            .unwrap_or_else(|_| serde_json::json!({}))
+    } else {
+        serde_json::json!({})
+    };
+    v["pater"] = serde_json::json!({ "plugin_dirs": plugin_dirs });
+    std::fs::write(cfg, serde_json::to_string_pretty(&v)?)?;
+    Ok(())
+}
+
+fn patch_codex_config(root: &std::path::Path, plugin_dirs: &[String]) -> anyhow::Result<()> {
+    let cfg = root.join("config.toml");
+    let mut content = if cfg.exists() {
+        std::fs::read_to_string(&cfg)?
+    } else {
+        String::new()
+    };
+    let start = "# >>> pater managed start >>>";
+    let end = "# <<< pater managed end <<<";
+    if let (Some(s), Some(e)) = (content.find(start), content.find(end)) {
+        content.replace_range(s..(e + end.len()), "");
+    }
+    let dirs = plugin_dirs
+        .iter()
+        .map(|d| format!("\"{}\"", d.replace('"', "\\\"")))
+        .collect::<Vec<_>>()
+        .join(", ");
+    content.push_str(&format!(
+        "\n{start}\n[pater]\nplugin_dirs = [{dirs}]\n{end}\n"
+    ));
+    std::fs::write(cfg, content)?;
+    Ok(())
+}
+
+fn write_wrapper(home: &str, name: &str, cmd: &str, plugin_dirs: &[String]) -> anyhow::Result<()> {
+    let bin = PathBuf::from(home).join(".local/bin");
+    std::fs::create_dir_all(&bin)?;
+    let mut args = String::new();
+    for d in plugin_dirs {
+        args.push_str(&format!(" --plugin-dir '{}'", d.replace('\'', "'\\''")));
+    }
+    let script = format!("#!/usr/bin/env sh\nexec {cmd}{args} \"$@\"\n");
+    let path = bin.join(name);
+    std::fs::write(&path, script)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&path)?.permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&path, perms)?;
     }
     Ok(())
 }
