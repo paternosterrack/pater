@@ -274,3 +274,179 @@ fn rack_commands_success_paths() {
     );
     assert!(out.contains("rack release prepared"));
 }
+
+#[test]
+fn authoring_commands_success_paths() {
+    let home = TempDir::new().unwrap();
+    let rack = TempDir::new().unwrap();
+
+    fs::create_dir_all(rack.path().join(".pater")).unwrap();
+    fs::write(
+        rack.path().join(".pater/marketplace.json"),
+        r#"{"name":"paternoster-rack","plugins":[]}"#,
+    )
+    .unwrap();
+
+    // plugin create/update/remove
+    let out = run(
+        &home,
+        &[
+            "plugin",
+            "create",
+            "demo",
+            "--rack-dir",
+            rack.path().to_str().unwrap(),
+            "--description",
+            "Demo plugin",
+        ],
+    );
+    assert!(out.contains("created"));
+
+    let out = run(
+        &home,
+        &[
+            "plugin",
+            "update",
+            "demo",
+            "--rack-dir",
+            rack.path().to_str().unwrap(),
+            "--version",
+            "0.2.0",
+        ],
+    );
+    assert!(out.contains("updated"));
+
+    // skill create/remove
+    let out = run(
+        &home,
+        &[
+            "skill",
+            "create",
+            "demo",
+            "review",
+            "--rack-dir",
+            rack.path().to_str().unwrap(),
+            "--description",
+            "Review code",
+        ],
+    );
+    assert!(out.contains("created"));
+
+    let out = run(
+        &home,
+        &[
+            "skill",
+            "remove",
+            "demo",
+            "review",
+            "--rack-dir",
+            rack.path().to_str().unwrap(),
+        ],
+    );
+    assert!(out.contains("removed"));
+
+    // subagent create/remove
+    let out = run(
+        &home,
+        &[
+            "subagent",
+            "create",
+            "demo",
+            "planner",
+            "--rack-dir",
+            rack.path().to_str().unwrap(),
+            "--purpose",
+            "Plan tasks",
+        ],
+    );
+    assert!(out.contains("created"));
+
+    let out = run(
+        &home,
+        &[
+            "subagent",
+            "remove",
+            "demo",
+            "planner",
+            "--rack-dir",
+            rack.path().to_str().unwrap(),
+        ],
+    );
+    assert!(out.contains("removed"));
+
+    // hook create/remove
+    let out = run(
+        &home,
+        &[
+            "hook",
+            "create",
+            "demo",
+            "--rack-dir",
+            rack.path().to_str().unwrap(),
+            "--agent",
+            "codex",
+            "--event",
+            "pre-commit",
+            "--run",
+            "cargo test",
+        ],
+    );
+    assert!(out.contains("created"));
+
+    let out = run(
+        &home,
+        &[
+            "hook",
+            "remove",
+            "demo",
+            "--rack-dir",
+            rack.path().to_str().unwrap(),
+            "--agent",
+            "codex",
+            "--event",
+            "pre-commit",
+        ],
+    );
+    assert!(out.contains("removed"));
+
+    // mcp create/remove
+    let out = run(
+        &home,
+        &[
+            "mcp",
+            "create",
+            "demo",
+            "github",
+            "--rack-dir",
+            rack.path().to_str().unwrap(),
+            "--command",
+            "mcp-github",
+        ],
+    );
+    assert!(out.contains("added"));
+
+    let out = run(
+        &home,
+        &[
+            "mcp",
+            "remove",
+            "demo",
+            "github",
+            "--rack-dir",
+            rack.path().to_str().unwrap(),
+        ],
+    );
+    assert!(out.contains("removed"));
+
+    let out = run(
+        &home,
+        &[
+            "plugin",
+            "remove",
+            "demo",
+            "--rack-dir",
+            rack.path().to_str().unwrap(),
+        ],
+    );
+    assert!(out.contains("removed"));
+}

@@ -70,6 +70,23 @@ pater update [plugin]
 pater remove <plugin>
 pater installed
 
+# authoring (all entities belong to a plugin)
+pater plugin create <plugin> --rack-dir ../rack --description "..."
+pater plugin update <plugin> --rack-dir ../rack [--description "..."] [--version x.y.z]
+pater plugin remove <plugin> --rack-dir ../rack
+
+pater skill create <plugin> <skill> --rack-dir ../rack --description "..."
+pater skill remove <plugin> <skill> --rack-dir ../rack
+
+pater subagent create <plugin> <name> --rack-dir ../rack --purpose "..."
+pater subagent remove <plugin> <name> --rack-dir ../rack
+
+pater hook create <plugin> --rack-dir ../rack --agent codex --event pre-commit --run "cargo test"
+pater hook remove <plugin> --rack-dir ../rack --agent codex --event pre-commit
+
+pater mcp create <plugin> <name> --rack-dir ../rack --command "mcp-server"
+pater mcp remove <plugin> <name> --rack-dir ../rack
+
 # adapters
 pater adapter sync --target all|claude|codex|openclaw
 pater adapter smoke --target all|claude|codex|openclaw

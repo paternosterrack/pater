@@ -68,6 +68,26 @@ enum Commands {
         #[command(subcommand)]
         command: RackCommands,
     },
+    Plugin {
+        #[command(subcommand)]
+        command: PluginCommands,
+    },
+    Skill {
+        #[command(subcommand)]
+        command: SkillCommands,
+    },
+    Subagent {
+        #[command(subcommand)]
+        command: SubagentCommands,
+    },
+    Hook {
+        #[command(subcommand)]
+        command: HookCommandsAdmin,
+    },
+    Mcp {
+        #[command(subcommand)]
+        command: McpCommands,
+    },
     ReleaseCheck,
 }
 
@@ -124,6 +144,109 @@ enum RackCommands {
         rack_dir: String,
         #[arg(long)]
         sign_key: String,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum PluginCommands {
+    Create {
+        name: String,
+        #[arg(long, default_value = "../rack")]
+        rack_dir: String,
+        #[arg(long, default_value = "New plugin")]
+        description: String,
+    },
+    Update {
+        name: String,
+        #[arg(long, default_value = "../rack")]
+        rack_dir: String,
+        #[arg(long)]
+        description: Option<String>,
+        #[arg(long)]
+        version: Option<String>,
+    },
+    Remove {
+        name: String,
+        #[arg(long, default_value = "../rack")]
+        rack_dir: String,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum SkillCommands {
+    Create {
+        plugin: String,
+        name: String,
+        #[arg(long, default_value = "../rack")]
+        rack_dir: String,
+        #[arg(long, default_value = "Skill description")]
+        description: String,
+    },
+    Remove {
+        plugin: String,
+        name: String,
+        #[arg(long, default_value = "../rack")]
+        rack_dir: String,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum SubagentCommands {
+    Create {
+        plugin: String,
+        name: String,
+        #[arg(long, default_value = "../rack")]
+        rack_dir: String,
+        #[arg(long, default_value = "Subagent purpose")]
+        purpose: String,
+    },
+    Remove {
+        plugin: String,
+        name: String,
+        #[arg(long, default_value = "../rack")]
+        rack_dir: String,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum HookCommandsAdmin {
+    Create {
+        plugin: String,
+        #[arg(long, default_value = "../rack")]
+        rack_dir: String,
+        #[arg(long)]
+        agent: String,
+        #[arg(long)]
+        event: String,
+        #[arg(long)]
+        run: String,
+    },
+    Remove {
+        plugin: String,
+        #[arg(long, default_value = "../rack")]
+        rack_dir: String,
+        #[arg(long)]
+        agent: String,
+        #[arg(long)]
+        event: String,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum McpCommands {
+    Create {
+        plugin: String,
+        name: String,
+        #[arg(long, default_value = "../rack")]
+        rack_dir: String,
+        #[arg(long)]
+        command: String,
+    },
+    Remove {
+        plugin: String,
+        name: String,
+        #[arg(long, default_value = "../rack")]
+        rack_dir: String,
     },
 }
 
@@ -343,6 +466,143 @@ fn main() -> anyhow::Result<()> {
                 if report.unknown_count > 0 {
                     std::process::exit(1);
                 }
+            }
+        }
+        return Ok(());
+    }
+
+    if let Commands::Plugin { command } = &cli.command {
+        match command {
+            PluginCommands::Create {
+                name,
+                rack_dir,
+                description,
+            } => {
+                plugin_create(rack_dir, name, description)?;
+                print_one(cli.json, "created", |_| format!("plugin {} created", name))?;
+            }
+            PluginCommands::Update {
+                name,
+                rack_dir,
+                description,
+                version,
+            } => {
+                plugin_update(rack_dir, name, description.clone(), version.clone())?;
+                print_one(cli.json, "updated", |_| format!("plugin {} updated", name))?;
+            }
+            PluginCommands::Remove { name, rack_dir } => {
+                plugin_remove(rack_dir, name)?;
+                print_one(cli.json, "removed", |_| format!("plugin {} removed", name))?;
+            }
+        }
+        return Ok(());
+    }
+
+    if let Commands::Skill { command } = &cli.command {
+        match command {
+            SkillCommands::Create {
+                plugin,
+                name,
+                rack_dir,
+                description,
+            } => {
+                skill_create(rack_dir, plugin, name, description)?;
+                print_one(cli.json, "created", |_| {
+                    format!("skill {}/{} created", plugin, name)
+                })?;
+            }
+            SkillCommands::Remove {
+                plugin,
+                name,
+                rack_dir,
+            } => {
+                skill_remove(rack_dir, plugin, name)?;
+                print_one(cli.json, "removed", |_| {
+                    format!("skill {}/{} removed", plugin, name)
+                })?;
+            }
+        }
+        return Ok(());
+    }
+
+    if let Commands::Subagent { command } = &cli.command {
+        match command {
+            SubagentCommands::Create {
+                plugin,
+                name,
+                rack_dir,
+                purpose,
+            } => {
+                subagent_create(rack_dir, plugin, name, purpose)?;
+                print_one(cli.json, "created", |_| {
+                    format!("subagent {}/{} created", plugin, name)
+                })?;
+            }
+            SubagentCommands::Remove {
+                plugin,
+                name,
+                rack_dir,
+            } => {
+                subagent_remove(rack_dir, plugin, name)?;
+                print_one(cli.json, "removed", |_| {
+                    format!("subagent {}/{} removed", plugin, name)
+                })?;
+            }
+        }
+        return Ok(());
+    }
+
+    if let Commands::Hook { command } = &cli.command {
+        match command {
+            HookCommandsAdmin::Create {
+                plugin,
+                rack_dir,
+                agent,
+                event,
+                run,
+            } => {
+                hook_create(rack_dir, plugin, agent, event, run)?;
+                print_one(cli.json, "created", |_| {
+                    format!("hook created for {}", plugin)
+                })?;
+            }
+            HookCommandsAdmin::Remove {
+                plugin,
+                rack_dir,
+                agent,
+                event,
+            } => {
+                hook_remove(rack_dir, plugin, agent, event)?;
+                print_one(cli.json, "removed", |_| {
+                    format!("hook removed for {}", plugin)
+                })?;
+            }
+        }
+        return Ok(());
+    }
+
+    if let Commands::Mcp { command } = &cli.command {
+        match command {
+            McpCommands::Create {
+                plugin,
+                name,
+                rack_dir,
+                command,
+            } => {
+                mcp_create(rack_dir, plugin, name, command)?;
+                print_one(cli.json, "created", |_| {
+                    format!("mcp {} added to {}", name, plugin)
+                })?;
+            }
+            McpCommands::Remove {
+                plugin,
+                name,
+                rack_dir,
+            } => {
+                mcp_remove(rack_dir, plugin, name)?;
+                print_one(cli.json, "removed", |_| {
+                    format!("mcp {} removed from {}", name, plugin)
+                })?;
             }
         }
         return Ok(());
@@ -651,6 +911,11 @@ fn main() -> anyhow::Result<()> {
         }
         Commands::Trust { .. } => unreachable!("handled before marketplace loading"),
         Commands::Rack { .. } => unreachable!("handled before marketplace loading"),
+        Commands::Plugin { .. } => unreachable!("handled before marketplace loading"),
+        Commands::Skill { .. } => unreachable!("handled before marketplace loading"),
+        Commands::Subagent { .. } => unreachable!("handled before marketplace loading"),
+        Commands::Hook { .. } => unreachable!("handled before marketplace loading"),
+        Commands::Mcp { .. } => unreachable!("handled before marketplace loading"),
     }
 
     Ok(())
@@ -1188,6 +1453,244 @@ fn rack_doctor(rack_dir: &str, sign_key: Option<&str>) -> RackDoctorReport {
     .to_string();
 
     RackDoctorReport { overall, checks }
+}
+
+fn rack_marketplace_path(rack_dir: &str) -> PathBuf {
+    PathBuf::from(rack_dir).join(".pater/marketplace.json")
+}
+
+fn load_marketplace_value(rack_dir: &str) -> anyhow::Result<serde_json::Value> {
+    let p = rack_marketplace_path(rack_dir);
+    Ok(serde_json::from_str(&std::fs::read_to_string(p)?)?)
+}
+
+fn save_marketplace_value(rack_dir: &str, v: &serde_json::Value) -> anyhow::Result<()> {
+    let p = rack_marketplace_path(rack_dir);
+    if let Some(parent) = p.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(p, serde_json::to_string_pretty(v)?)?;
+    Ok(())
+}
+
+fn get_plugin_mut<'a>(
+    m: &'a mut serde_json::Value,
+    name: &str,
+) -> anyhow::Result<&'a mut serde_json::Value> {
+    let arr = m
+        .get_mut("plugins")
+        .and_then(|x| x.as_array_mut())
+        .ok_or_else(|| anyhow::anyhow!("missing plugins array"))?;
+    arr.iter_mut()
+        .find(|p| p.get("name").and_then(|x| x.as_str()) == Some(name))
+        .ok_or_else(|| anyhow::anyhow!("plugin not found: {}", name))
+}
+
+fn ensure_array_field<'a>(
+    obj: &'a mut serde_json::Value,
+    field: &str,
+) -> anyhow::Result<&'a mut Vec<serde_json::Value>> {
+    if obj.get(field).is_none() {
+        obj[field] = serde_json::Value::Array(vec![]);
+    }
+    obj.get_mut(field)
+        .and_then(|x| x.as_array_mut())
+        .ok_or_else(|| anyhow::anyhow!("invalid array field {}", field))
+}
+
+fn plugin_create(rack_dir: &str, name: &str, description: &str) -> anyhow::Result<()> {
+    let mut m = load_marketplace_value(rack_dir)?;
+    if m.get("plugins").is_none() {
+        m["plugins"] = serde_json::Value::Array(vec![]);
+    }
+    let arr = m.get_mut("plugins").and_then(|x| x.as_array_mut()).unwrap();
+    if arr
+        .iter()
+        .any(|p| p.get("name").and_then(|x| x.as_str()) == Some(name))
+    {
+        anyhow::bail!("plugin exists: {}", name);
+    }
+    arr.push(serde_json::json!({"name": name, "source": format!("./plugins/{}", name), "description": description, "version": "0.1.0", "skills": [], "hooks": [], "subagents": []}));
+    save_marketplace_value(rack_dir, &m)?;
+
+    let base = PathBuf::from(rack_dir).join("plugins").join(name);
+    std::fs::create_dir_all(base.join(".claude-plugin"))?;
+    std::fs::create_dir_all(base.join("skills"))?;
+    std::fs::write(
+        base.join(".claude-plugin/plugin.json"),
+        serde_json::to_string_pretty(
+            &serde_json::json!({"name": name, "description": description, "version": "0.1.0"}),
+        )?,
+    )?;
+    Ok(())
+}
+
+fn plugin_update(
+    rack_dir: &str,
+    name: &str,
+    description: Option<String>,
+    version: Option<String>,
+) -> anyhow::Result<()> {
+    let mut m = load_marketplace_value(rack_dir)?;
+    let p = get_plugin_mut(&mut m, name)?;
+    if let Some(d) = description {
+        p["description"] = serde_json::Value::String(d);
+    }
+    if let Some(v) = version {
+        p["version"] = serde_json::Value::String(v.clone());
+        let manifest = PathBuf::from(rack_dir)
+            .join("plugins")
+            .join(name)
+            .join(".claude-plugin/plugin.json");
+        if manifest.exists() {
+            let mut mv: serde_json::Value =
+                serde_json::from_str(&std::fs::read_to_string(&manifest)?)?;
+            mv["version"] = serde_json::Value::String(v);
+            std::fs::write(manifest, serde_json::to_string_pretty(&mv)?)?;
+        }
+    }
+    save_marketplace_value(rack_dir, &m)
+}
+
+fn plugin_remove(rack_dir: &str, name: &str) -> anyhow::Result<()> {
+    let mut m = load_marketplace_value(rack_dir)?;
+    let arr = m
+        .get_mut("plugins")
+        .and_then(|x| x.as_array_mut())
+        .ok_or_else(|| anyhow::anyhow!("missing plugins array"))?;
+    arr.retain(|p| p.get("name").and_then(|x| x.as_str()) != Some(name));
+    save_marketplace_value(rack_dir, &m)?;
+    let dir = PathBuf::from(rack_dir).join("plugins").join(name);
+    if dir.exists() {
+        std::fs::remove_dir_all(dir)?;
+    }
+    Ok(())
+}
+
+fn skill_create(rack_dir: &str, plugin: &str, name: &str, description: &str) -> anyhow::Result<()> {
+    let mut m = load_marketplace_value(rack_dir)?;
+    let p = get_plugin_mut(&mut m, plugin)?;
+    let skills = ensure_array_field(p, "skills")?;
+    if !skills.iter().any(|s| s.as_str() == Some(name)) {
+        skills.push(serde_json::Value::String(name.to_string()));
+    }
+    save_marketplace_value(rack_dir, &m)?;
+    let d = PathBuf::from(rack_dir)
+        .join("plugins")
+        .join(plugin)
+        .join("skills")
+        .join(name);
+    std::fs::create_dir_all(&d)?;
+    std::fs::write(
+        d.join("SKILL.md"),
+        format!(
+            "---
+description: {}
+---
+
+# {}
+",
+            description, name
+        ),
+    )?;
+    Ok(())
+}
+
+fn skill_remove(rack_dir: &str, plugin: &str, name: &str) -> anyhow::Result<()> {
+    let mut m = load_marketplace_value(rack_dir)?;
+    let p = get_plugin_mut(&mut m, plugin)?;
+    let skills = ensure_array_field(p, "skills")?;
+    skills.retain(|s| s.as_str() != Some(name));
+    save_marketplace_value(rack_dir, &m)?;
+    let d = PathBuf::from(rack_dir)
+        .join("plugins")
+        .join(plugin)
+        .join("skills")
+        .join(name);
+    if d.exists() {
+        std::fs::remove_dir_all(d)?;
+    }
+    Ok(())
+}
+
+fn subagent_create(rack_dir: &str, plugin: &str, name: &str, purpose: &str) -> anyhow::Result<()> {
+    let mut m = load_marketplace_value(rack_dir)?;
+    let p = get_plugin_mut(&mut m, plugin)?;
+    let arr = ensure_array_field(p, "subagents")?;
+    arr.retain(|x| x.get("name").and_then(|v| v.as_str()) != Some(name));
+    arr.push(serde_json::json!({"name":name,"purpose":purpose}));
+    save_marketplace_value(rack_dir, &m)
+}
+
+fn subagent_remove(rack_dir: &str, plugin: &str, name: &str) -> anyhow::Result<()> {
+    let mut m = load_marketplace_value(rack_dir)?;
+    let p = get_plugin_mut(&mut m, plugin)?;
+    let arr = ensure_array_field(p, "subagents")?;
+    arr.retain(|x| x.get("name").and_then(|v| v.as_str()) != Some(name));
+    save_marketplace_value(rack_dir, &m)
+}
+
+fn hook_create(
+    rack_dir: &str,
+    plugin: &str,
+    agent: &str,
+    event: &str,
+    run: &str,
+) -> anyhow::Result<()> {
+    let mut m = load_marketplace_value(rack_dir)?;
+    let p = get_plugin_mut(&mut m, plugin)?;
+    let arr = ensure_array_field(p, "hooks")?;
+    arr.push(serde_json::json!({"agent":agent,"event":event,"run":run}));
+    save_marketplace_value(rack_dir, &m)
+}
+
+fn hook_remove(rack_dir: &str, plugin: &str, agent: &str, event: &str) -> anyhow::Result<()> {
+    let mut m = load_marketplace_value(rack_dir)?;
+    let p = get_plugin_mut(&mut m, plugin)?;
+    let arr = ensure_array_field(p, "hooks")?;
+    arr.retain(|x| {
+        !(x.get("agent").and_then(|v| v.as_str()) == Some(agent)
+            && x.get("event").and_then(|v| v.as_str()) == Some(event))
+    });
+    save_marketplace_value(rack_dir, &m)
+}
+
+fn mcp_create(rack_dir: &str, plugin: &str, name: &str, command: &str) -> anyhow::Result<()> {
+    let manifest = PathBuf::from(rack_dir)
+        .join("plugins")
+        .join(plugin)
+        .join(".claude-plugin/plugin.json");
+    if !manifest.exists() {
+        anyhow::bail!("plugin manifest not found for {}", plugin);
+    }
+    let mut v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&manifest)?)?;
+    if v.get("mcps").is_none() {
+        v["mcps"] = serde_json::json!([]);
+    }
+    let arr = v
+        .get_mut("mcps")
+        .and_then(|x| x.as_array_mut())
+        .ok_or_else(|| anyhow::anyhow!("invalid mcps"))?;
+    arr.retain(|x| x.get("name").and_then(|s| s.as_str()) != Some(name));
+    arr.push(serde_json::json!({"name":name,"command":command}));
+    std::fs::write(manifest, serde_json::to_string_pretty(&v)?)?;
+    Ok(())
+}
+
+fn mcp_remove(rack_dir: &str, plugin: &str, name: &str) -> anyhow::Result<()> {
+    let manifest = PathBuf::from(rack_dir)
+        .join("plugins")
+        .join(plugin)
+        .join(".claude-plugin/plugin.json");
+    if !manifest.exists() {
+        return Ok(());
+    }
+    let mut v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&manifest)?)?;
+    if let Some(arr) = v.get_mut("mcps").and_then(|x| x.as_array_mut()) {
+        arr.retain(|x| x.get("name").and_then(|s| s.as_str()) != Some(name));
+    }
+    std::fs::write(manifest, serde_json::to_string_pretty(&v)?)?;
+    Ok(())
 }
 
 fn parse_upstream_plugins(path: &PathBuf) -> Vec<serde_json::Value> {
