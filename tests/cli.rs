@@ -32,12 +32,12 @@ fn cli_core_commands_and_options_success_paths() {
     // marketplace commands
     let out = run(
         &home,
-        &["--marketplace", "../rack", "marketplace", "add", "../rack"],
+        &["--marketplace", "../rack", "remote", "add", "../rack"],
     );
     assert!(out.contains("added paternoster-rack"));
-    let out = run(&home, &["marketplace", "list"]);
+    let out = run(&home, &["remote", "list"]);
     assert!(out.contains("paternoster-rack"));
-    let out = run(&home, &["marketplace", "update"]);
+    let out = run(&home, &["remote", "update"]);
     assert!(out.contains("updated"));
 
     // discovery/show/validate/hooks
@@ -45,7 +45,7 @@ fn cli_core_commands_and_options_success_paths() {
     assert!(out.contains("marketplace valid"));
     let out = run(
         &home,
-        &["--marketplace", "../rack", "--json", "discover", "commit"],
+        &["--marketplace", "../rack", "--json", "search", "commit"],
     );
     assert!(out.contains("commit-commands"));
     let out = run(
@@ -58,7 +58,7 @@ fn cli_core_commands_and_options_success_paths() {
         ],
     );
     assert!(out.contains("name: commit-commands"));
-    let _ = run(&home, &["--marketplace", "../rack", "hooks", "list"]);
+    let _ = run(&home, &["--marketplace", "../rack", "hook", "list"]);
 
     // install options (scope)
     run(
@@ -95,7 +95,7 @@ fn cli_core_commands_and_options_success_paths() {
         ],
     );
 
-    let out = run(&home, &["installed"]);
+    let out = run(&home, &["list"]);
     assert!(out.contains("commit-commands"));
     assert!(out.contains("typescript-lsp"));
     assert!(out.contains("pyright-lsp"));
@@ -118,10 +118,7 @@ fn cli_core_commands_and_options_success_paths() {
     assert!(out.contains("overall"));
 
     // release check command
-    let out = run(
-        &home,
-        &["--marketplace", "../rack", "--json", "release-check"],
-    );
+    let out = run(&home, &["--marketplace", "../rack", "--json", "check"]);
     assert!(out.contains("rack_license_audit"));
 
     // remove command
@@ -291,6 +288,7 @@ fn authoring_commands_success_paths() {
     let out = run(
         &home,
         &[
+            "author",
             "plugin",
             "create",
             "demo",
@@ -305,6 +303,7 @@ fn authoring_commands_success_paths() {
     let out = run(
         &home,
         &[
+            "author",
             "plugin",
             "update",
             "demo",
@@ -320,6 +319,7 @@ fn authoring_commands_success_paths() {
     let out = run(
         &home,
         &[
+            "author",
             "skill",
             "create",
             "demo",
@@ -335,6 +335,7 @@ fn authoring_commands_success_paths() {
     let out = run(
         &home,
         &[
+            "author",
             "skill",
             "remove",
             "demo",
@@ -349,6 +350,7 @@ fn authoring_commands_success_paths() {
     let out = run(
         &home,
         &[
+            "author",
             "subagent",
             "create",
             "demo",
@@ -364,6 +366,7 @@ fn authoring_commands_success_paths() {
     let out = run(
         &home,
         &[
+            "author",
             "subagent",
             "remove",
             "demo",
@@ -378,6 +381,7 @@ fn authoring_commands_success_paths() {
     let out = run(
         &home,
         &[
+            "author",
             "hook",
             "create",
             "demo",
@@ -396,6 +400,7 @@ fn authoring_commands_success_paths() {
     let out = run(
         &home,
         &[
+            "author",
             "hook",
             "remove",
             "demo",
@@ -413,6 +418,7 @@ fn authoring_commands_success_paths() {
     let out = run(
         &home,
         &[
+            "author",
             "mcp",
             "create",
             "demo",
@@ -428,6 +434,7 @@ fn authoring_commands_success_paths() {
     let out = run(
         &home,
         &[
+            "author",
             "mcp",
             "remove",
             "demo",
@@ -441,6 +448,7 @@ fn authoring_commands_success_paths() {
     let out = run(
         &home,
         &[
+            "author",
             "plugin",
             "remove",
             "demo",

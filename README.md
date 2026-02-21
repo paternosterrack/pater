@@ -31,10 +31,10 @@ cp examples/policy-safe-default.toml ~/.config/pater/policy.toml
 ### 2) Install and verify
 
 ```bash
-pater discover typescript
+pater search typescript
 pater install typescript-lsp@paternoster-rack
 pater adapter doctor
-pater release-check
+pater check
 ```
 
 ### 3) Restart your agent CLI
@@ -57,35 +57,38 @@ Production/default usage is remote marketplace `paternosterrack/rack`.
 ## Core Commands
 
 ```bash
-# marketplace
-pater marketplace add <source>
-pater marketplace list
-pater marketplace update
+# remotes
+pater remote add <source>
+pater remote list
+pater remote update
 
 # lifecycle
-pater discover [query]
+pater search [query]
 pater show <plugin[@marketplace]>
 pater install <plugin@marketplace> [--scope user|project|local]
 pater update [plugin]
 pater remove <plugin>
-pater installed
+pater list
 
 # authoring (all entities belong to a plugin)
-pater plugin create <plugin> --rack-dir ../rack --description "..."
-pater plugin update <plugin> --rack-dir ../rack [--description "..."] [--version x.y.z]
-pater plugin remove <plugin> --rack-dir ../rack
+pater author plugin create <plugin> --rack-dir ../rack --description "..."
+pater author plugin update <plugin> --rack-dir ../rack [--description "..."] [--version x.y.z]
+pater author plugin remove <plugin> --rack-dir ../rack
 
-pater skill create <plugin> <skill> --rack-dir ../rack --description "..."
-pater skill remove <plugin> <skill> --rack-dir ../rack
+pater author skill create <plugin> <skill> --rack-dir ../rack --description "..."
+pater author skill remove <plugin> <skill> --rack-dir ../rack
 
-pater subagent create <plugin> <name> --rack-dir ../rack --purpose "..."
-pater subagent remove <plugin> <name> --rack-dir ../rack
+pater author subagent create <plugin> <name> --rack-dir ../rack --purpose "..."
+pater author subagent remove <plugin> <name> --rack-dir ../rack
 
-pater hook create <plugin> --rack-dir ../rack --agent codex --event pre-commit --run "cargo test"
-pater hook remove <plugin> --rack-dir ../rack --agent codex --event pre-commit
+pater author hook create <plugin> --rack-dir ../rack --agent codex --event pre-commit --run "cargo test"
+pater author hook remove <plugin> --rack-dir ../rack --agent codex --event pre-commit
 
-pater mcp create <plugin> <name> --rack-dir ../rack --command "mcp-server"
-pater mcp remove <plugin> <name> --rack-dir ../rack
+pater author mcp create <plugin> <name> --rack-dir ../rack --command "mcp-server"
+pater author mcp remove <plugin> <name> --rack-dir ../rack
+
+# runtime hook discovery
+pater hook list [--agent codex]
 
 # adapters
 pater adapter sync --target all|claude|codex|openclaw
@@ -98,7 +101,7 @@ pater trust list
 pater trust status
 
 # release gate
-pater release-check
+pater check
 
 # rack maintainer pipeline (replaces old python scripts)
 pater rack doctor --rack-dir ../rack --sign-key /path/to/key.pem

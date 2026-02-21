@@ -27,7 +27,7 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
-    Discover {
+    Search {
         query: Option<String>,
     },
     Show {
@@ -50,15 +50,15 @@ enum Commands {
     Remove {
         plugin: String,
     },
-    Installed,
-    Hooks {
+    List,
+    Hook {
         #[command(subcommand)]
         command: HookCommands,
     },
     Validate,
-    Marketplace {
+    Remote {
         #[command(subcommand)]
-        command: MarketplaceCommands,
+        command: RemoteCommands,
     },
     Trust {
         #[command(subcommand)]
@@ -68,27 +68,18 @@ enum Commands {
         #[command(subcommand)]
         command: RackCommands,
     },
-    Plugin {
+    Author {
         #[command(subcommand)]
-        command: PluginCommands,
+        command: AuthorCommands,
     },
-    Skill {
-        #[command(subcommand)]
-        command: SkillCommands,
-    },
-    Subagent {
-        #[command(subcommand)]
-        command: SubagentCommands,
-    },
-    Hook {
-        #[command(subcommand)]
-        command: HookCommandsAdmin,
-    },
-    Mcp {
-        #[command(subcommand)]
-        command: McpCommands,
-    },
-    ReleaseCheck,
+    Check,
+}
+
+#[derive(Subcommand, Debug)]
+enum RemoteCommands {
+    Add { source: String },
+    List,
+    Update,
 }
 
 #[derive(Subcommand, Debug)]
@@ -97,13 +88,6 @@ enum HookCommands {
         #[arg(long)]
         agent: Option<String>,
     },
-}
-
-#[derive(Subcommand, Debug)]
-enum MarketplaceCommands {
-    Add { source: String },
-    List,
-    Update,
 }
 
 #[derive(Subcommand, Debug)]
@@ -144,6 +128,30 @@ enum RackCommands {
         rack_dir: String,
         #[arg(long)]
         sign_key: String,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum AuthorCommands {
+    Plugin {
+        #[command(subcommand)]
+        command: PluginCommands,
+    },
+    Skill {
+        #[command(subcommand)]
+        command: SkillCommands,
+    },
+    Subagent {
+        #[command(subcommand)]
+        command: SubagentCommands,
+    },
+    Hook {
+        #[command(subcommand)]
+        command: HookCommandsAdmin,
+    },
+    Mcp {
+        #[command(subcommand)]
+        command: McpCommands,
     },
 }
 
@@ -210,6 +218,10 @@ enum SubagentCommands {
 
 #[derive(Subcommand, Debug)]
 enum HookCommandsAdmin {
+    List {
+        #[arg(long)]
+        agent: Option<String>,
+    },
     Create {
         plugin: String,
         #[arg(long, default_value = "../rack")]
@@ -471,139 +483,128 @@ fn main() -> anyhow::Result<()> {
         return Ok(());
     }
 
-    if let Commands::Plugin { command } = &cli.command {
+    if let Commands::Author { command } = &cli.command {
         match command {
-            PluginCommands::Create {
-                name,
-                rack_dir,
-                description,
-            } => {
-                plugin_create(rack_dir, name, description)?;
-                print_one(cli.json, "created", |_| format!("plugin {} created", name))?;
-            }
-            PluginCommands::Update {
-                name,
-                rack_dir,
-                description,
-                version,
-            } => {
-                plugin_update(rack_dir, name, description.clone(), version.clone())?;
-                print_one(cli.json, "updated", |_| format!("plugin {} updated", name))?;
-            }
-            PluginCommands::Remove { name, rack_dir } => {
-                plugin_remove(rack_dir, name)?;
-                print_one(cli.json, "removed", |_| format!("plugin {} removed", name))?;
-            }
-        }
-        return Ok(());
-    }
-
-    if let Commands::Skill { command } = &cli.command {
-        match command {
-            SkillCommands::Create {
-                plugin,
-                name,
-                rack_dir,
-                description,
-            } => {
-                skill_create(rack_dir, plugin, name, description)?;
-                print_one(cli.json, "created", |_| {
-                    format!("skill {}/{} created", plugin, name)
-                })?;
-            }
-            SkillCommands::Remove {
-                plugin,
-                name,
-                rack_dir,
-            } => {
-                skill_remove(rack_dir, plugin, name)?;
-                print_one(cli.json, "removed", |_| {
-                    format!("skill {}/{} removed", plugin, name)
-                })?;
-            }
-        }
-        return Ok(());
-    }
-
-    if let Commands::Subagent { command } = &cli.command {
-        match command {
-            SubagentCommands::Create {
-                plugin,
-                name,
-                rack_dir,
-                purpose,
-            } => {
-                subagent_create(rack_dir, plugin, name, purpose)?;
-                print_one(cli.json, "created", |_| {
-                    format!("subagent {}/{} created", plugin, name)
-                })?;
-            }
-            SubagentCommands::Remove {
-                plugin,
-                name,
-                rack_dir,
-            } => {
-                subagent_remove(rack_dir, plugin, name)?;
-                print_one(cli.json, "removed", |_| {
-                    format!("subagent {}/{} removed", plugin, name)
-                })?;
-            }
-        }
-        return Ok(());
-    }
-
-    if let Commands::Hook { command } = &cli.command {
-        match command {
-            HookCommandsAdmin::Create {
-                plugin,
-                rack_dir,
-                agent,
-                event,
-                run,
-            } => {
-                hook_create(rack_dir, plugin, agent, event, run)?;
-                print_one(cli.json, "created", |_| {
-                    format!("hook created for {}", plugin)
-                })?;
-            }
-            HookCommandsAdmin::Remove {
-                plugin,
-                rack_dir,
-                agent,
-                event,
-            } => {
-                hook_remove(rack_dir, plugin, agent, event)?;
-                print_one(cli.json, "removed", |_| {
-                    format!("hook removed for {}", plugin)
-                })?;
-            }
-        }
-        return Ok(());
-    }
-
-    if let Commands::Mcp { command } = &cli.command {
-        match command {
-            McpCommands::Create {
-                plugin,
-                name,
-                rack_dir,
-                command,
-            } => {
-                mcp_create(rack_dir, plugin, name, command)?;
-                print_one(cli.json, "created", |_| {
-                    format!("mcp {} added to {}", name, plugin)
-                })?;
-            }
-            McpCommands::Remove {
-                plugin,
-                name,
-                rack_dir,
-            } => {
-                mcp_remove(rack_dir, plugin, name)?;
-                print_one(cli.json, "removed", |_| {
-                    format!("mcp {} removed from {}", name, plugin)
-                })?;
-            }
+            AuthorCommands::Plugin { command } => match command {
+                PluginCommands::Create {
+                    name,
+                    rack_dir,
+                    description,
+                } => {
+                    plugin_create(rack_dir, name, description)?;
+                    print_one(cli.json, "created", |_| format!("plugin {} created", name))?;
+                }
+                PluginCommands::Update {
+                    name,
+                    rack_dir,
+                    description,
+                    version,
+                } => {
+                    plugin_update(rack_dir, name, description.clone(), version.clone())?;
+                    print_one(cli.json, "updated", |_| format!("plugin {} updated", name))?;
+                }
+                PluginCommands::Remove { name, rack_dir } => {
+                    plugin_remove(rack_dir, name)?;
+                    print_one(cli.json, "removed", |_| format!("plugin {} removed", name))?;
+                }
+            },
+            AuthorCommands::Skill { command } => match command {
+                SkillCommands::Create {
+                    plugin,
+                    name,
+                    rack_dir,
+                    description,
+                } => {
+                    skill_create(rack_dir, plugin, name, description)?;
+                    print_one(cli.json, "created", |_| {
+                        format!("skill {}/{} created", plugin, name)
+                    })?;
+                }
+                SkillCommands::Remove {
+                    plugin,
+                    name,
+                    rack_dir,
+                } => {
+                    skill_remove(rack_dir, plugin, name)?;
+                    print_one(cli.json, "removed", |_| {
+                        format!("skill {}/{} removed", plugin, name)
+                    })?;
+                }
+            },
+            AuthorCommands::Subagent { command } => match command {
+                SubagentCommands::Create {
+                    plugin,
+                    name,
+                    rack_dir,
+                    purpose,
+                } => {
+                    subagent_create(rack_dir, plugin, name, purpose)?;
+                    print_one(cli.json, "created", |_| {
+                        format!("subagent {}/{} created", plugin, name)
+                    })?;
+                }
+                SubagentCommands::Remove {
+                    plugin,
+                    name,
+                    rack_dir,
+                } => {
+                    subagent_remove(rack_dir, plugin, name)?;
+                    print_one(cli.json, "removed", |_| {
+                        format!("subagent {}/{} removed", plugin, name)
+                    })?;
+                }
+            },
+            AuthorCommands::Hook { command } => match command {
+                HookCommandsAdmin::List { .. } => {
+                    anyhow::bail!("use `pater hook list` for listing hooks");
+                }
+                HookCommandsAdmin::Create {
+                    plugin,
+                    rack_dir,
+                    agent,
+                    event,
+                    run,
+                } => {
+                    hook_create(rack_dir, plugin, agent, event, run)?;
+                    print_one(cli.json, "created", |_| {
+                        format!("hook created for {}", plugin)
+                    })?;
+                }
+                HookCommandsAdmin::Remove {
+                    plugin,
+                    rack_dir,
+                    agent,
+                    event,
+                } => {
+                    hook_remove(rack_dir, plugin, agent, event)?;
+                    print_one(cli.json, "removed", |_| {
+                        format!("hook removed for {}", plugin)
+                    })?;
+                }
+            },
+            AuthorCommands::Mcp { command } => match command {
+                McpCommands::Create {
+                    plugin,
+                    name,
+                    rack_dir,
+                    command,
+                } => {
+                    mcp_create(rack_dir, plugin, name, command)?;
+                    print_one(cli.json, "created", |_| {
+                        format!("mcp {} added to {}", name, plugin)
+                    })?;
+                }
+                McpCommands::Remove {
+                    plugin,
+                    name,
+                    rack_dir,
+                } => {
+                    mcp_remove(rack_dir, plugin, name)?;
+                    print_one(cli.json, "removed", |_| {
+                        format!("mcp {} removed from {}", name, plugin)
+                    })?;
+                }
+            },
         }
         return Ok(());
     }
@@ -622,7 +623,7 @@ fn main() -> anyhow::Result<()> {
     dedupe_markets(&mut all_markets);
 
     match cli.command {
-        Commands::Discover { query } => {
+        Commands::Search { query } => {
             let items = discover_across(&all_markets, query.as_deref(), &policy)?;
             print_out(cli.json, &items, |p| {
                 format!("{}\t{}\t{}", p.marketplace, p.name, p.description)
@@ -791,12 +792,12 @@ fn main() -> anyhow::Result<()> {
                 println!("removed {} entries", removed);
             }
         }
-        Commands::Installed => {
+        Commands::List => {
             print_out(cli.json, &state.installed, |p| {
                 format!("{}\t{}\t{:?}", p.name, p.marketplace, p.scope)
             })?;
         }
-        Commands::Hooks { command } => match command {
+        Commands::Hook { command } => match command {
             HookCommands::List { agent } => {
                 let hooks = rack::list_hooks(&default_market, agent.as_deref());
                 if cli.json {
@@ -828,8 +829,8 @@ fn main() -> anyhow::Result<()> {
                 println!("marketplace valid");
             }
         }
-        Commands::Marketplace { command } => match command {
-            MarketplaceCommands::Add { source } => {
+        Commands::Remote { command } => match command {
+            RemoteCommands::Add { source } => {
                 let m = checked_load_marketplace(&source, &policy)?;
                 let mr = MarketRef {
                     name: m.name,
@@ -841,12 +842,12 @@ fn main() -> anyhow::Result<()> {
                 }
                 print_one(cli.json, mr, |m| format!("added {}", m.name))?;
             }
-            MarketplaceCommands::List => {
+            RemoteCommands::List => {
                 print_out(cli.json, &state.marketplaces, |m| {
                     format!("{}\t{}", m.name, m.source)
                 })?;
             }
-            MarketplaceCommands::Update => {
+            RemoteCommands::Update => {
                 let mut checked = 0usize;
                 for m in &state.marketplaces {
                     rack::refresh_marketplace(&m.source)?;
@@ -866,7 +867,7 @@ fn main() -> anyhow::Result<()> {
                 }
             }
         },
-        Commands::ReleaseCheck => {
+        Commands::Check => {
             let trust = TrustStatus {
                 require_signed_marketplace: policy.general.require_signed_marketplace,
                 trusted_key_count: list_pubkeys()?.len(),
@@ -896,7 +897,7 @@ fn main() -> anyhow::Result<()> {
                 recommendations.push("Run `pater adapter sync --target all` and `pater adapter doctor` until all adapter checks are ok.".to_string());
             }
             if rack_license_audit != "ok" {
-                recommendations.push("Run `python3 ../rack/scripts/license_audit.py` and resolve unknown/proprietary plugins before release.".to_string());
+                recommendations.push("Run `pater rack license-audit --rack-dir ../rack` and resolve unknown/proprietary plugins before release.".to_string());
             }
             let report = ReleaseCheckReport {
                 overall,
@@ -911,11 +912,7 @@ fn main() -> anyhow::Result<()> {
         }
         Commands::Trust { .. } => unreachable!("handled before marketplace loading"),
         Commands::Rack { .. } => unreachable!("handled before marketplace loading"),
-        Commands::Plugin { .. } => unreachable!("handled before marketplace loading"),
-        Commands::Skill { .. } => unreachable!("handled before marketplace loading"),
-        Commands::Subagent { .. } => unreachable!("handled before marketplace loading"),
-        Commands::Hook { .. } => unreachable!("handled before marketplace loading"),
-        Commands::Mcp { .. } => unreachable!("handled before marketplace loading"),
+        Commands::Author { .. } => unreachable!("handled before marketplace loading"),
     }
 
     Ok(())
