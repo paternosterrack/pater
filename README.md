@@ -1,25 +1,12 @@
 # pater 🛠️
 
-CLI for **Paternoster Rack** — an agent-agnostic plugin marketplace for Claude/Codex/OpenClaw-style tooling.
+`pater` is the plugin manager for **Paternoster Rack**.
 
-## Current state
-
-Implemented now:
-- Marketplace flow: discover/show/install/update/remove
-- Default official marketplace (`paternosterrack/rack`) with cache + refresh
-- Adapter sync + activation shims for Claude, Codex, OpenClaw
-- Install scopes (`user|project|local`)
-- Lockfile (`~/.config/pater/pater.lock`)
-- Trust bootstrap + signed marketplace verification (`trust init/list/status`)
-- Policy gates (permissions, denied plugins, unknown-license + external-reference controls)
-- Audit log (`~/.config/pater/audit.jsonl`)
-- One-shot health gate: `release-check`
-
----
+It is built for agent CLIs (Claude, Codex, OpenClaw) with trust, policy, and adapter sync in one tool.
 
 ## Install
 
-### Recommended (macOS/Linux/WSL)
+### macOS / Linux / WSL
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/paternosterrack/pater/main/scripts/install.sh | sh
@@ -31,21 +18,43 @@ curl -fsSL https://raw.githubusercontent.com/paternosterrack/pater/main/scripts/
 irm https://raw.githubusercontent.com/paternosterrack/pater/main/scripts/install.ps1 | iex
 ```
 
----
+## For Users
 
-## Quick start
+### 1) Bootstrap trust + policy
 
 ```bash
 pater trust init
-pater discover commit
-pater install commit-commands@paternoster-rack
+mkdir -p ~/.config/pater
+cp examples/policy-safe-default.toml ~/.config/pater/policy.toml
+```
+
+### 2) Install and verify
+
+```bash
+pater discover typescript
+pater install typescript-lsp@paternoster-rack
 pater adapter doctor
 pater release-check
 ```
 
----
+### 3) Restart your agent CLI
 
-## Key commands
+Restart Claude/Codex/OpenClaw to load newly synced plugins.
+
+## For Developers
+
+`../rack` is **dev-only local path usage** when `pater` and `rack` are cloned side-by-side.
+
+Example:
+
+```bash
+# local development against sibling rack repo
+pater --marketplace ../rack validate
+```
+
+Production/default usage is remote marketplace `paternosterrack/rack`.
+
+## Core Commands
 
 ```bash
 # marketplace
@@ -53,7 +62,7 @@ pater marketplace add <source>
 pater marketplace list
 pater marketplace update
 
-# plugin lifecycle
+# lifecycle
 pater discover [query]
 pater show <plugin[@marketplace]>
 pater install <plugin@marketplace> [--scope user|project|local]
@@ -75,18 +84,7 @@ pater trust status
 pater release-check
 ```
 
----
-
 ## Policy
 
-Policy file: `~/.config/pater/policy.toml`
-
-See starter policy:
-- `examples/policy-safe-default.toml`
-
-Notable controls:
-- `require_signed_marketplace`
-- `block_unknown_licenses`
-- `allow_unknown_license_plugins`
-- `allow_external_reference_installs`
-- `allow_external_reference_plugins`
+Policy file: `~/.config/pater/policy.toml`  
+Starter template: `examples/policy-safe-default.toml`
