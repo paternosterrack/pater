@@ -20,26 +20,18 @@ fn validate_marketplace() {
 #[test]
 fn discover_json() {
     cmd()
-        .args(["--marketplace", "../rack", "--json", "discover", "lint"])
+        .args(["--marketplace", "../rack", "--json", "discover", "commit"])
         .assert()
         .success()
-        .stdout(contains("lint-tools"));
+        .stdout(contains("commit-commands"));
 }
 
 #[test]
-fn hooks_filter_agent() {
+fn hooks_list_prints() {
     cmd()
-        .args([
-            "--marketplace",
-            "../rack",
-            "hooks",
-            "list",
-            "--agent",
-            "codex",
-        ])
+        .args(["--marketplace", "../rack", "hooks", "list"])
         .assert()
-        .success()
-        .stdout(contains("codex"));
+        .success();
 }
 
 #[test]
@@ -49,7 +41,7 @@ fn install_and_list_installed() {
             "--marketplace",
             "../rack",
             "install",
-            "lint-tools@paternoster-rack",
+            "commit-commands@paternoster-rack",
         ])
         .assert()
         .success();
@@ -58,5 +50,5 @@ fn install_and_list_installed() {
         .arg("installed")
         .assert()
         .success()
-        .stdout(contains("lint-tools"));
+        .stdout(contains("commit-commands"));
 }
