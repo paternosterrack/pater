@@ -17,6 +17,8 @@ This repo (`pater`) is the CLI/runtime interface for `rack` marketplaces.
    - discover/show/install/remove/installed
    - validate/hooks list
 3. Maintain machine-friendly `--json` outputs for automation.
+4. When adding or changing a CLI command/option, add/update tests in `tests/cli.rs` in the same change.
+5. CI tests must pass on every PR/push (`.github/workflows/tests.yml`).
 
 ## Rack integration contract (mandatory)
 
