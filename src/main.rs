@@ -183,6 +183,10 @@ struct PolicyGeneral {
     block_unknown_licenses: bool,
     #[serde(default)]
     allow_unknown_license_plugins: Vec<String>,
+    #[serde(default)]
+    allow_external_reference_installs: bool,
+    #[serde(default)]
+    allow_external_reference_plugins: Vec<String>,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -515,11 +519,22 @@ fn main() -> anyhow::Result<()> {
             }
             .to_string();
 
+            let mut recommendations = Vec::new();
+            if !trust.default_marketplace_signature_ok {
+                recommendations.push("Run `pater trust init` and ensure marketplace.sig is published for default marketplace.".to_string());
+            }
+            if doctor.overall != "ok" {
+                recommendations.push("Run `pater adapter sync --target all` and `pater adapter doctor` until all adapter checks are ok.".to_string());
+            }
+            if rack_license_audit != "ok" {
+                recommendations.push("Run `python3 ../rack/scripts/license_audit.py` and resolve unknown/proprietary plugins before release.".to_string());
+            }
             let report = ReleaseCheckReport {
                 overall,
                 trust,
                 doctor,
                 rack_license_audit,
+                recommendations,
             };
             print_one(cli.json, report, |r| {
                 format!("release-check: {}", r.overall)
@@ -539,6 +554,8 @@ struct DiscoverItem {
     description: String,
     version: Option<String>,
     source: String,
+    distribution: Option<String>,
+    license_status: Option<String>,
     permissions: Vec<String>,
 }
 
@@ -588,6 +605,7 @@ struct ReleaseCheckReport {
     trust: TrustStatus,
     doctor: DoctorReport,
     rack_license_audit: String,
+    recommendations: Vec<String>,
 }
 
 fn update_plugins(
@@ -696,6 +714,8 @@ fn discover_across(
                 description: p.description.clone().unwrap_or_default(),
                 version: p.version.clone(),
                 source: p.source.clone(),
+                distribution: p.distribution.clone(),
+                license_status: p.license_status.clone(),
                 permissions: p.permissions.clone(),
             });
         }
@@ -724,6 +744,8 @@ fn show_plugin(
                 description: p.description.clone().unwrap_or_default(),
                 version: p.version.clone(),
                 source: p.source.clone(),
+                distribution: p.distribution.clone(),
+                license_status: p.license_status.clone(),
                 permissions: p.permissions.clone(),
             });
         }
@@ -874,6 +896,20 @@ fn enforce_policy_for_plugin(policy: &PolicyFile, p: &DiscoverItem) -> anyhow::R
         .any(|perm| policy.general.blocked_permissions.contains(perm))
     {
         anyhow::bail!("policy blocked permission in plugin: {}", p.name);
+    }
+
+    if p.distribution.as_deref() == Some("external-reference-only")
+        && !policy.general.allow_external_reference_installs
+        && !policy
+            .general
+            .allow_external_reference_plugins
+            .iter()
+            .any(|x| x == &p.name)
+    {
+        anyhow::bail!(
+            "policy blocked external-reference-only plugin: {} (set allow_external_reference_installs=true or add plugin to allow_external_reference_plugins)",
+            p.name
+        );
     }
 
     if policy.general.block_unknown_licenses {

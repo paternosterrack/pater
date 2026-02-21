@@ -1,0 +1,14 @@
+[general]
+require_signed_marketplace = true
+block_unknown_licenses = true
+allow_external_reference_installs = false
+
+# Optional per-plugin overrides
+allow_unknown_license_plugins = []
+allow_external_reference_plugins = []
+
+# Optional source restrictions
+allowed_sources = ["paternosterrack/rack", "https://raw.githubusercontent.com/paternosterrack/"]
+
+denied_plugins = []
+blocked_permissions = []
