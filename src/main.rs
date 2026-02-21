@@ -81,6 +81,10 @@ enum AdapterCommands {
         #[arg(long, value_enum, default_value_t = AdapterTarget::All)]
         target: AdapterTarget,
     },
+    Smoke {
+        #[arg(long, value_enum, default_value_t = AdapterTarget::All)]
+        target: AdapterTarget,
+    },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, ValueEnum)]
@@ -194,7 +198,8 @@ fn main() -> anyhow::Result<()> {
         Commands::Install { target, scope } => {
             let (name, market) = parse_target(&target);
             let p = show_plugin(&all_markets, &name, market.as_deref())?;
-            let local_path = rack::resolve_plugin_path(&p.marketplace_source, &p.source)?;
+            let source_path = rack::resolve_plugin_path(&p.marketplace_source, &p.source)?;
+            let local_path = materialize_plugin(&p.name, &source_path)?;
             let entry = InstalledPlugin {
                 name: p.name.clone(),
                 marketplace: p.marketplace.clone(),
@@ -236,6 +241,22 @@ fn main() -> anyhow::Result<()> {
                     );
                 } else {
                     println!("adapter sync completed");
+                }
+            }
+            AdapterCommands::Smoke { target } => {
+                let report = adapter_smoke(&state, target.clone())?;
+                if cli.json {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&JsonOut {
+                            ok: true,
+                            data: report
+                        })?
+                    );
+                } else {
+                    for r in report {
+                        println!("{}\t{}", r.adapter, r.status);
+                    }
                 }
             }
         },
@@ -373,6 +394,14 @@ struct UpdateReport {
     added_permissions: Vec<String>,
 }
 
+#[derive(Serialize)]
+struct SmokeReport {
+    adapter: String,
+    status: String,
+    checked_plugins: usize,
+    missing_plugins: Vec<String>,
+}
+
 fn update_plugins(
     state: &mut State,
     markets: &[MarketRef],
@@ -417,8 +446,10 @@ fn update_plugins(
             installed.permissions = latest.permissions.clone();
             installed.source = latest.source.clone();
             installed.marketplace_source = latest.marketplace_source.clone();
-            if let Ok(p) = rack::resolve_plugin_path(&latest.marketplace_source, &latest.source) {
-                installed.local_path = p.to_string_lossy().to_string();
+            if let Ok(src) = rack::resolve_plugin_path(&latest.marketplace_source, &latest.source) {
+                if let Ok(p) = materialize_plugin(&installed.name, &src) {
+                    installed.local_path = p.to_string_lossy().to_string();
+                }
             }
             reports.push(report);
         } else {
@@ -515,6 +546,23 @@ fn upsert_installed(state: &mut State, entry: InstalledPlugin) {
     }
 }
 
+fn managed_store_base() -> anyhow::Result<PathBuf> {
+    let home = std::env::var("HOME")?;
+    Ok(PathBuf::from(home)
+        .join(".local")
+        .join("share")
+        .join("pater")
+        .join("plugins"))
+}
+
+fn materialize_plugin(name: &str, source_path: &std::path::Path) -> anyhow::Result<PathBuf> {
+    let base = managed_store_base()?;
+    std::fs::create_dir_all(&base)?;
+    let dst = base.join(name);
+    copy_dir_all(source_path, &dst)?;
+    Ok(dst)
+}
+
 fn copy_dir_all(src: &std::path::Path, dst: &std::path::Path) -> anyhow::Result<()> {
     if dst.exists() {
         std::fs::remove_dir_all(dst)?;
@@ -595,6 +643,61 @@ fn sync_installed(state: &State, target: AdapterTarget) -> anyhow::Result<()> {
         t => sync_target(state, t)?,
     }
     Ok(())
+}
+
+fn adapter_smoke(state: &State, target: AdapterTarget) -> anyhow::Result<Vec<SmokeReport>> {
+    let targets = match target {
+        AdapterTarget::All => vec![
+            AdapterTarget::Claude,
+            AdapterTarget::Codex,
+            AdapterTarget::Openclaw,
+        ],
+        t => vec![t],
+    };
+
+    let mut out = Vec::new();
+    for t in targets {
+        let base = adapter_base(&t)?;
+        let mut missing = Vec::new();
+        for p in &state.installed {
+            if !base.join(&p.name).exists() {
+                missing.push(p.name.clone());
+            }
+        }
+
+        let shim_ok = match t {
+            AdapterTarget::Claude => std::env::var("HOME")
+                .map(|h| PathBuf::from(h).join(".claude/pater.plugins.json").exists())
+                .unwrap_or(false),
+            AdapterTarget::Codex => std::env::var("HOME")
+                .map(|h| PathBuf::from(h).join(".codex/pater.plugins.json").exists())
+                .unwrap_or(false),
+            AdapterTarget::Openclaw => std::env::var("HOME")
+                .map(|h| {
+                    PathBuf::from(h)
+                        .join(".openclaw/workspace/skills/.pater-index.json")
+                        .exists()
+                })
+                .unwrap_or(false),
+            AdapterTarget::All => true,
+        };
+
+        let status = if missing.is_empty() && shim_ok {
+            "ok".to_string()
+        } else if !shim_ok {
+            "missing_shim".to_string()
+        } else {
+            "missing_plugins".to_string()
+        };
+
+        out.push(SmokeReport {
+            adapter: format!("{:?}", t).to_lowercase(),
+            status,
+            checked_plugins: state.installed.len(),
+            missing_plugins: missing,
+        });
+    }
+    Ok(out)
 }
 
 fn write_activation_shim(target: &AdapterTarget, plugin_dirs: &[String]) -> anyhow::Result<()> {
