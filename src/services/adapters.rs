@@ -1,4 +1,6 @@
-use crate::{rack, AdapterTarget, CheckItem, DoctorReport, SmokeReport, State};
+use crate::cli::AdapterTarget;
+use crate::domain::models::{CheckItem, DoctorReport, SmokeReport, State};
+use crate::rack;
 use std::collections::HashSet;
 use std::path::PathBuf;
 

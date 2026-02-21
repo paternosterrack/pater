@@ -1,4 +1,4 @@
-use crate::{InstalledPlugin, Lockfile, State};
+use crate::domain::models::{InstalledPlugin, Lockfile, State};
 use std::path::PathBuf;
 
 pub fn audit(action: &str, data: serde_json::Value) {

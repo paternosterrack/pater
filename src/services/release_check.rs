@@ -1,4 +1,4 @@
-use crate::{DoctorReport, ReleaseCheckReport, TrustStatus};
+use crate::domain::models::{DoctorReport, ReleaseCheckReport, TrustStatus};
 
 pub fn build_release_check_report(
     trust: TrustStatus,

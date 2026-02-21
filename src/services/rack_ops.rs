@@ -1,4 +1,4 @@
-use crate::{CheckItem, RackDoctorReport, RackLicenseAuditSummary};
+use crate::domain::models::{CheckItem, RackDoctorReport, RackLicenseAuditSummary};
 use std::path::PathBuf;
 
 pub fn rack_doctor(rack_dir: &str, sign_key: Option<&str>) -> RackDoctorReport {

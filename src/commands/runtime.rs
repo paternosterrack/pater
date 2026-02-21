@@ -1,11 +1,30 @@
-use crate::*;
+use crate::cli::{
+    AdapterCommands, AdapterTarget, Cli, Commands, HookCommands, InstallScope, PolicyCommands,
+    RemoteCommands, DEFAULT_MARKETPLACE_SOURCE,
+};
+use crate::domain::models::{
+    CapabilitiesReport, InstalledPlugin, JsonOut, MarketRef, PlanReport, PolicyFile, State,
+    TrustStatus,
+};
+use crate::rack;
+use crate::services::adapters::{adapter_doctor, adapter_smoke, sync_installed};
+use crate::services::marketplace::{
+    checked_load_marketplace, discover_across, enforce_policy_for_plugin, parse_target,
+    policy_eval_for_plugin, recommend_plugins, run_rack_license_audit, show_plugin, update_plugins,
+};
+use crate::services::output::{print_one, print_out};
+use crate::services::release_check::build_release_check_report;
+use crate::services::storage::{
+    audit, materialize_plugin, save_lockfile, save_state, upsert_installed,
+};
+use crate::services::trust::{list_pubkeys, verify_marketplace_signature};
 
 pub fn handle_runtime_commands(
     cli: &Cli,
     state: &mut State,
     policy: &PolicyFile,
     all_markets: &[MarketRef],
-    default_market: &rack::Marketplace,
+    default_market: Option<&rack::Marketplace>,
 ) -> anyhow::Result<()> {
     match &cli.command {
         Commands::Search { query } => {
@@ -273,7 +292,9 @@ pub fn handle_runtime_commands(
         }
         Commands::Hook { command } => match command {
             HookCommands::List { agent } => {
-                let hooks = rack::list_hooks(default_market, agent.as_deref());
+                let market = default_market
+                    .ok_or_else(|| anyhow::anyhow!("default marketplace is required"))?;
+                let hooks = rack::list_hooks(market, agent.as_deref());
                 if cli.json {
                     println!(
                         "{}",
@@ -290,7 +311,9 @@ pub fn handle_runtime_commands(
             }
         },
         Commands::Validate => {
-            rack::validate(default_market)?;
+            let market =
+                default_market.ok_or_else(|| anyhow::anyhow!("default marketplace is required"))?;
+            rack::validate(market)?;
             if cli.json {
                 println!(
                     "{}",
@@ -324,8 +347,12 @@ pub fn handle_runtime_commands(
             RemoteCommands::Update => {
                 let mut checked = 0usize;
                 for m in &state.marketplaces {
-                    rack::refresh_marketplace(&m.source)?;
-                    let _ = checked_load_marketplace(&m.source, policy)?;
+                    if rack::refresh_marketplace(&m.source).is_err() {
+                        continue;
+                    }
+                    if checked_load_marketplace(&m.source, policy).is_err() {
+                        continue;
+                    }
                     checked += 1;
                 }
                 if cli.json {

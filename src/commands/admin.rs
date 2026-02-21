@@ -1,4 +1,19 @@
-use crate::*;
+use crate::cli::{
+    AuthorCommands, Cli, Commands, HookCommandsAdmin, McpCommands, PluginCommands, RackCommands,
+    SkillCommands, SubagentCommands, TrustCommands, DEFAULT_MARKETPLACE_SOURCE,
+};
+use crate::domain::constants::OFFICIAL_RACK_PUBKEY_HEX;
+use crate::domain::models::{JsonOut, PolicyFile, TrustStatus};
+use crate::services::authoring::{
+    hook_create, hook_remove, mcp_create, mcp_remove, plugin_create, plugin_remove, plugin_update,
+    skill_create, skill_remove, subagent_create, subagent_remove,
+};
+use crate::services::output::{print_one, print_out};
+use crate::services::rack_ops::{
+    rack_doctor, rack_license_audit, rack_mark_unknown_external, rack_sign_marketplace,
+    rack_sync_upstreams,
+};
+use crate::services::trust::{list_pubkeys, trust_init, verify_marketplace_signature};
 
 pub fn handle_trust_commands(cli: &Cli, policy: &PolicyFile) -> anyhow::Result<bool> {
     let Commands::Trust { command } = &cli.command else {
@@ -66,7 +81,7 @@ pub fn handle_rack_commands(cli: &Cli) -> anyhow::Result<bool> {
             } else {
                 println!("rack doctor: {}", report.overall);
                 for c in report.checks {
-                    println!("{}	{}", c.name, c.status);
+                    println!("{}\t{}", c.name, c.status);
                 }
             }
         }

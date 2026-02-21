@@ -1,5 +1,7 @@
 pub mod adapters;
 pub mod authoring;
+pub mod marketplace;
+pub mod output;
 pub mod policy;
 pub mod rack_ops;
 pub mod release_check;
