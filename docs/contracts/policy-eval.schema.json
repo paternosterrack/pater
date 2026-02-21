@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://paternosterrack.dev/contracts/v1/policy-eval.schema.json",
+  "title": "PolicyEvalReport",
+  "type": "object",
+  "required": ["plugin", "agent", "allowed", "reason"],
+  "properties": {
+    "plugin": { "type": "string" },
+    "agent": { "type": "string" },
+    "allowed": { "type": "boolean" },
+    "reason": { "type": "string" }
+  },
+  "additionalProperties": false
+}

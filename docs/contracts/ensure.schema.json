@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://paternosterrack.dev/contracts/v1/ensure.schema.json",
+  "title": "EnsureResult",
+  "type": "object",
+  "required": ["intent", "selected", "smoke"],
+  "properties": {
+    "intent": { "type": "string" },
+    "selected": {
+      "type": "object",
+      "required": ["name", "marketplace", "marketplace_source", "source", "local_path", "permissions", "scope"],
+      "properties": {
+        "name": { "type": "string" },
+        "marketplace": { "type": "string" },
+        "marketplace_source": { "type": "string" },
+        "source": { "type": "string" },
+        "local_path": { "type": "string" },
+        "version": { "type": ["string", "null"] },
+        "permissions": { "type": "array", "items": { "type": "string" } },
+        "scope": { "type": "string", "enum": ["User", "Project", "Local"] }
+      },
+      "additionalProperties": false
+    },
+    "smoke": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["adapter", "status", "checked_plugins", "missing_plugins"],
+        "properties": {
+          "adapter": { "type": "string" },
+          "status": { "type": "string" },
+          "checked_plugins": { "type": "integer", "minimum": 0 },
+          "missing_plugins": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

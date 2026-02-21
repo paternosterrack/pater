@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://paternosterrack.dev/contracts/v1/capabilities.schema.json",
+  "title": "CapabilitiesReport",
+  "type": "object",
+  "required": ["installed_count", "installed_plugins", "adapter_smoke"],
+  "properties": {
+    "installed_count": { "type": "integer", "minimum": 0 },
+    "installed_plugins": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "adapter_smoke": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["adapter", "status", "checked_plugins", "missing_plugins"],
+        "properties": {
+          "adapter": { "type": "string" },
+          "status": { "type": "string" },
+          "checked_plugins": { "type": "integer", "minimum": 0 },
+          "missing_plugins": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

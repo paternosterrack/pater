@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://paternosterrack.dev/contracts/v1/recommend.schema.json",
+  "title": "Recommendation[]",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "required": ["plugin", "marketplace", "score", "reason", "permission_count"],
+    "properties": {
+      "plugin": { "type": "string" },
+      "marketplace": { "type": "string" },
+      "score": { "type": "integer" },
+      "reason": { "type": "string" },
+      "permission_count": { "type": "integer", "minimum": 0 },
+      "distribution": { "type": ["string", "null"] },
+      "license_status": { "type": ["string", "null"] }
+    },
+    "additionalProperties": false
+  }
+}

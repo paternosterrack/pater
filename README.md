@@ -123,3 +123,9 @@ pater rack prepare-release --rack-dir ../rack --sign-key /path/to/key.pem
 
 Policy file: `~/.config/pater/policy.toml`  
 Starter template: `examples/policy-safe-default.toml`
+
+## Machine contracts
+
+Stable JSON contracts for agent integrations:
+- `docs/contracts/README.md`
+- `docs/contracts/*.schema.json`

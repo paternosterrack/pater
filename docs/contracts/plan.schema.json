@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://paternosterrack.dev/contracts/v1/plan.schema.json",
+  "title": "PlanReport",
+  "type": "object",
+  "required": ["intent", "agent", "recommendations"],
+  "properties": {
+    "intent": { "type": "string" },
+    "agent": { "type": "string" },
+    "recommendations": {
+      "$ref": "recommend.schema.json"
+    }
+  },
+  "additionalProperties": false
+}
