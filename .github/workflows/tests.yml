@@ -16,3 +16,7 @@ jobs:
         run: cargo clippy --all-targets --all-features -- -D warnings
       - name: test
         run: cargo test --all
+      - name: contracts-check deps
+        run: python3 -m pip install jsonschema
+      - name: contracts-check
+        run: python3 tests/contracts_check.py

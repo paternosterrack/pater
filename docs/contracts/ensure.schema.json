@@ -17,7 +17,7 @@
         "local_path": { "type": "string" },
         "version": { "type": ["string", "null"] },
         "permissions": { "type": "array", "items": { "type": "string" } },
-        "scope": { "type": "string", "enum": ["User", "Project", "Local"] }
+        "scope": { "type": "string", "enum": ["user", "project", "local"] }
       },
       "additionalProperties": false
     },
