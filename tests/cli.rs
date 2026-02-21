@@ -2,18 +2,30 @@ use assert_cmd::Command;
 use predicates::str::contains;
 
 fn cmd() -> Command {
-    Command::cargo_bin("pater").unwrap()
+    assert_cmd::cargo::cargo_bin_cmd!("pater")
 }
 
 #[test]
 fn validate_index() {
-    cmd().arg("--index").arg("../rack/index/skills.json").arg("validate").assert().success().stdout(contains("index valid"));
+    cmd()
+        .arg("--index")
+        .arg("../rack/index/skills.json")
+        .arg("validate")
+        .assert()
+        .success()
+        .stdout(contains("index valid"));
 }
 
 #[test]
 fn search_json() {
     cmd()
-        .args(["--index", "../rack/index/skills.json", "--json", "search", "lint"])
+        .args([
+            "--index",
+            "../rack/index/skills.json",
+            "--json",
+            "search",
+            "lint",
+        ])
         .assert()
         .success()
         .stdout(contains("skill.lint"));
@@ -22,7 +34,14 @@ fn search_json() {
 #[test]
 fn hooks_filter_agent() {
     cmd()
-        .args(["--index", "../rack/index/skills.json", "hooks", "list", "--agent", "codex"])
+        .args([
+            "--index",
+            "../rack/index/skills.json",
+            "hooks",
+            "list",
+            "--agent",
+            "codex",
+        ])
         .assert()
         .success()
         .stdout(contains("codex"));
