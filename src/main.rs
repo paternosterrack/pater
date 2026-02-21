@@ -6,6 +6,8 @@ use std::path::PathBuf;
 mod rack;
 
 const DEFAULT_MARKETPLACE_SOURCE: &str = "paternosterrack/rack";
+const OFFICIAL_RACK_PUBKEY_HEX: &str =
+    "5aefcc2a6716ef9fab24dc3865013e29a8d579e4dda33bf753a7cd7a8d14450a";
 
 #[derive(Parser, Debug)]
 #[command(name = "pater", version, about = "Paternoster Rack CLI")]
@@ -58,6 +60,10 @@ enum Commands {
         #[command(subcommand)]
         command: MarketplaceCommands,
     },
+    Trust {
+        #[command(subcommand)]
+        command: TrustCommands,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -73,6 +79,12 @@ enum MarketplaceCommands {
     Add { source: String },
     List,
     Update,
+}
+
+#[derive(Subcommand, Debug)]
+enum TrustCommands {
+    Init,
+    List,
 }
 
 #[derive(Subcommand, Debug)]
@@ -173,6 +185,30 @@ fn main() -> anyhow::Result<()> {
     let policy = load_policy()?;
 
     ensure_default_marketplace(&mut state)?;
+
+    if let Commands::Trust { command } = &cli.command {
+        match command {
+            TrustCommands::Init => {
+                trust_init()?;
+                if cli.json {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&JsonOut {
+                            ok: true,
+                            data: "initialized"
+                        })?
+                    );
+                } else {
+                    println!("trust initialized (official rack key installed)");
+                }
+            }
+            TrustCommands::List => {
+                let keys = list_pubkeys()?;
+                print_out(cli.json, &keys, |k| k.to_string())?;
+            }
+        }
+        return Ok(());
+    }
 
     for m in &state.marketplaces {
         let _ = rack::refresh_marketplace(&m.source);
@@ -432,6 +468,7 @@ fn main() -> anyhow::Result<()> {
                 }
             }
         },
+        Commands::Trust { .. } => unreachable!("handled before marketplace loading"),
     }
 
     Ok(())
@@ -633,9 +670,49 @@ fn load_policy() -> anyhow::Result<PolicyFile> {
     Ok(toml::from_str(&raw)?)
 }
 
-fn load_trusted_pubkeys() -> anyhow::Result<Vec<ed25519_dalek::VerifyingKey>> {
+fn trusted_pubkeys_path() -> anyhow::Result<PathBuf> {
     let home = std::env::var("HOME")?;
-    let path = PathBuf::from(home).join(".config/pater/trust/pubkeys.txt");
+    Ok(PathBuf::from(home).join(".config/pater/trust/pubkeys.txt"))
+}
+
+fn list_pubkeys() -> anyhow::Result<Vec<String>> {
+    let path = trusted_pubkeys_path()?;
+    if !path.exists() {
+        return Ok(vec![]);
+    }
+    Ok(std::fs::read_to_string(path)?
+        .lines()
+        .map(|l| l.trim().to_string())
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .collect())
+}
+
+fn trust_init() -> anyhow::Result<()> {
+    let path = trusted_pubkeys_path()?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let mut existing = if path.exists() {
+        std::fs::read_to_string(&path)?
+    } else {
+        String::new()
+    };
+    if !existing
+        .lines()
+        .any(|l| l.trim() == OFFICIAL_RACK_PUBKEY_HEX)
+    {
+        if !existing.is_empty() && !existing.ends_with('\n') {
+            existing.push('\n');
+        }
+        existing.push_str(OFFICIAL_RACK_PUBKEY_HEX);
+        existing.push('\n');
+        std::fs::write(path, existing)?;
+    }
+    Ok(())
+}
+
+fn load_trusted_pubkeys() -> anyhow::Result<Vec<ed25519_dalek::VerifyingKey>> {
+    let path = trusted_pubkeys_path()?;
     if !path.exists() {
         return Ok(vec![]);
     }
