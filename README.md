@@ -82,6 +82,14 @@ pater trust status
 
 # release gate
 pater release-check
+
+# rack maintainer pipeline (replaces old python scripts)
+pater rack sync --rack-dir ../rack
+pater rack license-audit --rack-dir ../rack
+pater rack mark-unknown-external --rack-dir ../rack
+pater rack sign --rack-dir ../rack --sign-key /path/to/key.pem
+# or one-shot
+pater rack prepare-release --rack-dir ../rack --sign-key /path/to/key.pem
 ```
 
 ## Policy

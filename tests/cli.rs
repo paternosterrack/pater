@@ -1,5 +1,7 @@
 use assert_cmd::cargo::cargo_bin_cmd;
 use predicates::str::contains;
+use std::fs;
+use std::process::Command;
 use tempfile::TempDir;
 
 fn run(home: &TempDir, args: &[&str]) -> String {
@@ -138,4 +140,124 @@ fn validate_marketplace_still_works() {
         .assert()
         .success()
         .stdout(contains("marketplace valid"));
+}
+
+#[test]
+fn rack_commands_success_paths() {
+    let home = TempDir::new().unwrap();
+    let rack = TempDir::new().unwrap();
+
+    fs::create_dir_all(
+        rack.path()
+            .join("_upstreams/claude-plugins-official/.claude-plugin"),
+    )
+    .unwrap();
+    fs::create_dir_all(rack.path().join("_upstreams/claude-code/.claude-plugin")).unwrap();
+    fs::create_dir_all(rack.path().join("_upstreams/skills/.claude-plugin")).unwrap();
+
+    let upstream = r#"{
+  "plugins": [
+    {"name": "demo", "source": "./plugins/demo"}
+  ]
+}"#;
+    fs::write(
+        rack.path()
+            .join("_upstreams/claude-plugins-official/.claude-plugin/marketplace.json"),
+        upstream,
+    )
+    .unwrap();
+    fs::write(
+        rack.path()
+            .join("_upstreams/claude-code/.claude-plugin/marketplace.json"),
+        "{\"plugins\":[]}",
+    )
+    .unwrap();
+    fs::write(
+        rack.path()
+            .join("_upstreams/skills/.claude-plugin/marketplace.json"),
+        "{\"plugins\":[]}",
+    )
+    .unwrap();
+
+    fs::create_dir_all(rack.path().join("plugins/demo/.claude-plugin")).unwrap();
+    fs::write(
+        rack.path().join("plugins/demo/LICENSE"),
+        "MIT License\nPermission is hereby granted",
+    )
+    .unwrap();
+    fs::write(
+        rack.path().join("plugins/demo/.claude-plugin/plugin.json"),
+        "{\"name\":\"demo\",\"version\":\"1.0.0\"}",
+    )
+    .unwrap();
+
+    let key = rack.path().join("test-key.pem");
+    let status = Command::new("openssl")
+        .args([
+            "genpkey",
+            "-algorithm",
+            "Ed25519",
+            "-out",
+            key.to_str().unwrap(),
+        ])
+        .status()
+        .unwrap();
+    assert!(status.success());
+
+    // rack sync
+    let out = run(
+        &home,
+        &["rack", "sync", "--rack-dir", rack.path().to_str().unwrap()],
+    );
+    assert!(out.contains("synced"));
+
+    // rack license audit success
+    let out = run(
+        &home,
+        &[
+            "rack",
+            "license-audit",
+            "--rack-dir",
+            rack.path().to_str().unwrap(),
+        ],
+    );
+    assert!(out.contains("license audit"));
+
+    // mark unknown external (should still succeed)
+    let _ = run(
+        &home,
+        &[
+            "rack",
+            "mark-unknown-external",
+            "--rack-dir",
+            rack.path().to_str().unwrap(),
+        ],
+    );
+
+    // sign + prepare-release
+    let out = run(
+        &home,
+        &[
+            "rack",
+            "sign",
+            "--rack-dir",
+            rack.path().to_str().unwrap(),
+            "--sign-key",
+            key.to_str().unwrap(),
+        ],
+    );
+    assert!(out.contains("signed"));
+
+    let out = run(
+        &home,
+        &[
+            "rack",
+            "prepare-release",
+            "--rack-dir",
+            rack.path().to_str().unwrap(),
+            "--sign-key",
+            key.to_str().unwrap(),
+        ],
+    );
+    assert!(out.contains("rack release prepared"));
 }
