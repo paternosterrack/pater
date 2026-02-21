@@ -24,6 +24,8 @@ pub struct Plugin {
     pub description: Option<String>,
     pub version: Option<String>,
     #[serde(default)]
+    pub permissions: Vec<String>,
+    #[serde(default)]
     pub skills: Vec<String>,
     #[serde(default)]
     pub hooks: Vec<Hook>,

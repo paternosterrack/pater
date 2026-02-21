@@ -1,5 +1,6 @@
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::path::PathBuf;
 
 mod rack;
@@ -32,6 +33,13 @@ enum Commands {
     },
     Install {
         target: String,
+        #[arg(long, value_enum, default_value_t = InstallScope::User)]
+        scope: InstallScope,
+    },
+    Update {
+        plugin: Option<String>,
+        #[arg(long, default_value_t = false)]
+        allow_permission_increase: bool,
     },
     Remove {
         plugin: String,
@@ -63,6 +71,14 @@ enum MarketplaceCommands {
     Update,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, ValueEnum)]
+#[serde(rename_all = "lowercase")]
+enum InstallScope {
+    User,
+    Project,
+    Local,
+}
+
 #[derive(Serialize)]
 struct JsonOut<T: Serialize> {
     ok: bool,
@@ -86,23 +102,22 @@ struct InstalledPlugin {
     name: String,
     marketplace: String,
     source: String,
+    version: Option<String>,
+    permissions: Vec<String>,
+    scope: InstallScope,
+}
+
+#[derive(Debug, Serialize, Deserialize, Default)]
+struct Lockfile {
+    version: u32,
+    plugins: Vec<InstalledPlugin>,
 }
 
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     let mut state = load_state()?;
 
-    if !state
-        .marketplaces
-        .iter()
-        .any(|m| m.source == DEFAULT_MARKETPLACE_SOURCE)
-    {
-        state.marketplaces.push(MarketRef {
-            name: "paternoster-rack".to_string(),
-            source: DEFAULT_MARKETPLACE_SOURCE.to_string(),
-        });
-        save_state(&state)?;
-    }
+    ensure_default_marketplace(&mut state)?;
 
     for m in &state.marketplaces {
         let _ = rack::refresh_marketplace(&m.source);
@@ -140,24 +155,26 @@ fn main() -> anyhow::Result<()> {
                     p.version.unwrap_or_else(|| "n/a".to_string())
                 );
                 println!("description: {}", p.description);
+                if !p.permissions.is_empty() {
+                    println!("permissions: {}", p.permissions.join(", "));
+                }
             }
         }
-        Commands::Install { target } => {
+        Commands::Install { target, scope } => {
             let (name, market) = parse_target(&target);
             let p = show_plugin(&all_markets, &name, market.as_deref())?;
             let entry = InstalledPlugin {
                 name: p.name.clone(),
                 marketplace: p.marketplace.clone(),
                 source: p.source.clone(),
+                version: p.version.clone(),
+                permissions: p.permissions.clone(),
+                scope,
             };
-            if !state
-                .installed
-                .iter()
-                .any(|i| i.name == entry.name && i.marketplace == entry.marketplace)
-            {
-                state.installed.push(entry.clone());
-                save_state(&state)?;
-            }
+            upsert_installed(&mut state, entry.clone());
+            save_state(&state)?;
+            save_lockfile(&state)?;
+
             if cli.json {
                 println!(
                     "{}",
@@ -170,10 +187,25 @@ fn main() -> anyhow::Result<()> {
                 println!("installed {}@{}", entry.name, entry.marketplace);
             }
         }
+        Commands::Update {
+            plugin,
+            allow_permission_increase,
+        } => {
+            let report = update_plugins(
+                &mut state,
+                &all_markets,
+                plugin.as_deref(),
+                allow_permission_increase,
+            )?;
+            save_state(&state)?;
+            save_lockfile(&state)?;
+            print_out(cli.json, &report, |r| format!("{}\t{}", r.name, r.status))?;
+        }
         Commands::Remove { plugin } => {
             let before = state.installed.len();
             state.installed.retain(|p| p.name != plugin);
             save_state(&state)?;
+            save_lockfile(&state)?;
             let removed = before.saturating_sub(state.installed.len());
             if cli.json {
                 println!(
@@ -189,7 +221,7 @@ fn main() -> anyhow::Result<()> {
         }
         Commands::Installed => {
             print_out(cli.json, &state.installed, |p| {
-                format!("{}\t{}", p.name, p.marketplace)
+                format!("{}\t{}\t{:?}", p.name, p.marketplace, p.scope)
             })?;
         }
         Commands::Hooks { command } => match command {
@@ -274,6 +306,92 @@ struct DiscoverItem {
     description: String,
     version: Option<String>,
     source: String,
+    permissions: Vec<String>,
+}
+
+#[derive(Serialize)]
+struct UpdateReport {
+    name: String,
+    status: String,
+    old_version: Option<String>,
+    new_version: Option<String>,
+    added_permissions: Vec<String>,
+}
+
+fn update_plugins(
+    state: &mut State,
+    markets: &[MarketRef],
+    only: Option<&str>,
+    allow_permission_increase: bool,
+) -> anyhow::Result<Vec<UpdateReport>> {
+    let mut reports = Vec::new();
+    for installed in &mut state.installed {
+        if only.map(|o| o != installed.name).unwrap_or(false) {
+            continue;
+        }
+        let latest = show_plugin(markets, &installed.name, Some(&installed.marketplace))?;
+        let old_permissions: HashSet<_> = installed.permissions.iter().cloned().collect();
+        let new_permissions: HashSet<_> = latest.permissions.iter().cloned().collect();
+        let added_permissions: Vec<String> = new_permissions
+            .difference(&old_permissions)
+            .cloned()
+            .collect();
+
+        if !added_permissions.is_empty() && !allow_permission_increase {
+            reports.push(UpdateReport {
+                name: installed.name.clone(),
+                status: "blocked_permission_increase".to_string(),
+                old_version: installed.version.clone(),
+                new_version: latest.version.clone(),
+                added_permissions,
+            });
+            continue;
+        }
+
+        let changed =
+            installed.version != latest.version || installed.permissions != latest.permissions;
+        if changed {
+            let report = UpdateReport {
+                name: installed.name.clone(),
+                status: "updated".to_string(),
+                old_version: installed.version.clone(),
+                new_version: latest.version.clone(),
+                added_permissions,
+            };
+            installed.version = latest.version.clone();
+            installed.permissions = latest.permissions.clone();
+            reports.push(report);
+        } else {
+            reports.push(UpdateReport {
+                name: installed.name.clone(),
+                status: "up_to_date".to_string(),
+                old_version: installed.version.clone(),
+                new_version: latest.version.clone(),
+                added_permissions: vec![],
+            });
+        }
+    }
+    Ok(reports)
+}
+
+fn ensure_default_marketplace(state: &mut State) -> anyhow::Result<()> {
+    if !state
+        .marketplaces
+        .iter()
+        .any(|m| m.source == DEFAULT_MARKETPLACE_SOURCE)
+    {
+        state.marketplaces.push(MarketRef {
+            name: "paternoster-rack".to_string(),
+            source: DEFAULT_MARKETPLACE_SOURCE.to_string(),
+        });
+        save_state(state)?;
+    }
+    Ok(())
+}
+
+fn dedupe_markets(markets: &mut Vec<MarketRef>) {
+    let mut seen = HashSet::new();
+    markets.retain(|m| seen.insert(format!("{}::{}", m.name, m.source)));
 }
 
 fn discover_across(
@@ -290,6 +408,7 @@ fn discover_across(
                 description: p.description.clone().unwrap_or_default(),
                 version: p.version.clone(),
                 source: p.source.clone(),
+                permissions: p.permissions.clone(),
             });
         }
     }
@@ -309,22 +428,29 @@ fn show_plugin(
             }
         }
         if let Ok(p) = rack::show(&loaded, name) {
-            let marketplace_name = loaded.name.clone();
             return Ok(DiscoverItem {
-                marketplace: marketplace_name,
+                marketplace: loaded.name.clone(),
                 name: p.name.clone(),
                 description: p.description.clone().unwrap_or_default(),
                 version: p.version.clone(),
                 source: p.source.clone(),
+                permissions: p.permissions.clone(),
             });
         }
     }
     anyhow::bail!("plugin not found: {}", name)
 }
 
-fn dedupe_markets(markets: &mut Vec<MarketRef>) {
-    let mut seen = std::collections::HashSet::new();
-    markets.retain(|m| seen.insert(format!("{}::{}", m.name, m.source)));
+fn upsert_installed(state: &mut State, entry: InstalledPlugin) {
+    if let Some(existing) = state
+        .installed
+        .iter_mut()
+        .find(|i| i.name == entry.name && i.marketplace == entry.marketplace)
+    {
+        *existing = entry;
+    } else {
+        state.installed.push(entry);
+    }
 }
 
 fn parse_target(target: &str) -> (String, Option<String>) {
@@ -339,6 +465,11 @@ fn parse_target(target: &str) -> (String, Option<String>) {
 fn state_path() -> anyhow::Result<PathBuf> {
     let home = std::env::var("HOME")?;
     Ok(PathBuf::from(home).join(".config/pater/state.json"))
+}
+
+fn lockfile_path() -> anyhow::Result<PathBuf> {
+    let home = std::env::var("HOME")?;
+    Ok(PathBuf::from(home).join(".config/pater/pater.lock"))
 }
 
 fn load_state() -> anyhow::Result<State> {
@@ -356,6 +487,19 @@ fn save_state(s: &State) -> anyhow::Result<()> {
         std::fs::create_dir_all(parent)?;
     }
     std::fs::write(p, serde_json::to_string_pretty(s)?)?;
+    Ok(())
+}
+
+fn save_lockfile(state: &State) -> anyhow::Result<()> {
+    let lock = Lockfile {
+        version: 1,
+        plugins: state.installed.clone(),
+    };
+    let p = lockfile_path()?;
+    if let Some(parent) = p.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(p, serde_json::to_string_pretty(&lock)?)?;
     Ok(())
 }
 
