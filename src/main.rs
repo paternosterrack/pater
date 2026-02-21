@@ -530,6 +530,7 @@ fn copy_dir_all(src: &std::path::Path, dst: &std::path::Path) -> anyhow::Result<
             std::fs::copy(entry.path(), to)?;
         }
     }
+    std::fs::write(dst.join(".pater-managed"), "managed-by=pater\n")?;
     Ok(())
 }
 
@@ -548,6 +549,8 @@ fn sync_target(state: &State, target: AdapterTarget) -> anyhow::Result<()> {
     let base = adapter_base(&target)?;
     std::fs::create_dir_all(&base)?;
     let mut installed_dirs = Vec::new();
+    let desired: std::collections::HashSet<String> =
+        state.installed.iter().map(|p| p.name.clone()).collect();
 
     for p in &state.installed {
         let mut src = PathBuf::from(&p.local_path);
@@ -562,6 +565,20 @@ fn sync_target(state: &State, target: AdapterTarget) -> anyhow::Result<()> {
         let dst = base.join(&p.name);
         copy_dir_all(&src, &dst)?;
         installed_dirs.push(dst.to_string_lossy().to_string());
+    }
+
+    // cleanup stale, previously managed plugin dirs
+    for entry in std::fs::read_dir(&base)? {
+        let entry = entry?;
+        if !entry.file_type()?.is_dir() {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().to_string();
+        let path = entry.path();
+        let managed = path.join(".pater-managed").exists();
+        if managed && !desired.contains(&name) {
+            std::fs::remove_dir_all(path)?;
+        }
     }
 
     write_activation_shim(&target, &installed_dirs)?;
