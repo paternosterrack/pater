@@ -1,18 +1,31 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
-pub struct Index {
-    pub version: String,
-    pub skills: Vec<Skill>,
+pub struct Marketplace {
+    pub name: String,
+    pub owner: Owner,
+    pub plugins: Vec<Plugin>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
-pub struct Skill {
-    pub id: String,
-    pub version: String,
-    pub summary: String,
-    pub agents: Vec<String>,
+pub struct Owner {
+    pub name: String,
+    pub email: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct Plugin {
+    pub name: String,
+    pub source: String,
+    pub description: Option<String>,
+    pub version: Option<String>,
+    #[serde(default)]
+    pub skills: Vec<String>,
+    #[serde(default)]
     pub hooks: Vec<Hook>,
+    #[serde(default)]
     pub subagents: Vec<Subagent>,
 }
 
@@ -22,7 +35,7 @@ pub struct Hook {
     pub event: String,
     pub run: String,
     #[serde(skip)]
-    pub skill_id: String,
+    pub plugin_name: String,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -33,39 +46,60 @@ pub struct Subagent {
 
 #[derive(thiserror::Error, Debug)]
 pub enum RackError {
-    #[error("skill not found: {0}")]
-    SkillNotFound(String),
-    #[error("duplicate skill id: {0}")]
-    DuplicateSkill(String),
+    #[error("plugin not found: {0}")]
+    PluginNotFound(String),
+    #[error("duplicate plugin name: {0}")]
+    DuplicatePlugin(String),
 }
 
-pub fn load_index(path: &str) -> anyhow::Result<Index> {
-    let raw = std::fs::read_to_string(path)?;
+pub fn resolve_marketplace_file(source: &str) -> PathBuf {
+    let p = Path::new(source);
+    if p.is_dir() {
+        p.join(".pater").join("marketplace.json")
+    } else {
+        p.to_path_buf()
+    }
+}
+
+pub fn load_marketplace(source: &str) -> anyhow::Result<Marketplace> {
+    let file = resolve_marketplace_file(source);
+    let raw = std::fs::read_to_string(file)?;
     Ok(serde_json::from_str(&raw)?)
 }
 
-pub fn search<'a>(idx: &'a Index, query: &str) -> Vec<&'a Skill> {
-    let q = query.to_ascii_lowercase();
-    idx.skills
-        .iter()
-        .filter(|s| s.id.to_ascii_lowercase().contains(&q) || s.summary.to_ascii_lowercase().contains(&q))
-        .collect()
+pub fn discover<'a>(m: &'a Marketplace, query: Option<&str>) -> Vec<&'a Plugin> {
+    match query {
+        None => m.plugins.iter().collect(),
+        Some(q) => {
+            let q = q.to_ascii_lowercase();
+            m.plugins
+                .iter()
+                .filter(|p| {
+                    p.name.to_ascii_lowercase().contains(&q)
+                        || p.description
+                            .as_ref()
+                            .map(|d| d.to_ascii_lowercase().contains(&q))
+                            .unwrap_or(false)
+                })
+                .collect()
+        }
+    }
 }
 
-pub fn show<'a>(idx: &'a Index, id: &str) -> anyhow::Result<&'a Skill> {
-    idx.skills
+pub fn show<'a>(m: &'a Marketplace, id: &str) -> anyhow::Result<&'a Plugin> {
+    m.plugins
         .iter()
-        .find(|s| s.id == id)
-        .ok_or_else(|| RackError::SkillNotFound(id.to_string()).into())
+        .find(|p| p.name == id)
+        .ok_or_else(|| RackError::PluginNotFound(id.to_string()).into())
 }
 
-pub fn list_hooks(idx: &Index, agent: Option<&str>) -> Vec<Hook> {
+pub fn list_hooks(m: &Marketplace, agent: Option<&str>) -> Vec<Hook> {
     let mut out = Vec::new();
-    for skill in &idx.skills {
-        for h in &skill.hooks {
+    for p in &m.plugins {
+        for h in &p.hooks {
             if agent.map(|a| a == h.agent).unwrap_or(true) {
                 let mut h2 = h.clone();
-                h2.skill_id = skill.id.clone();
+                h2.plugin_name = p.name.clone();
                 out.push(h2);
             }
         }
@@ -73,11 +107,11 @@ pub fn list_hooks(idx: &Index, agent: Option<&str>) -> Vec<Hook> {
     out
 }
 
-pub fn validate(idx: &Index) -> anyhow::Result<()> {
-    let mut seen = std::collections::HashSet::new();
-    for s in &idx.skills {
-        if !seen.insert(&s.id) {
-            return Err(RackError::DuplicateSkill(s.id.clone()).into());
+pub fn validate(m: &Marketplace) -> anyhow::Result<()> {
+    let mut seen = HashSet::new();
+    for p in &m.plugins {
+        if !seen.insert(&p.name) {
+            return Err(RackError::DuplicatePlugin(p.name.clone()).into());
         }
     }
     Ok(())

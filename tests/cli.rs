@@ -1,42 +1,37 @@
+use assert_cmd::cargo::cargo_bin_cmd;
 use assert_cmd::Command;
 use predicates::str::contains;
 
 fn cmd() -> Command {
-    assert_cmd::cargo::cargo_bin_cmd!("pater")
+    cargo_bin_cmd!("pater")
 }
 
 #[test]
-fn validate_index() {
+fn validate_marketplace() {
     cmd()
-        .arg("--index")
-        .arg("../rack/index/skills.json")
+        .arg("--marketplace")
+        .arg("../rack")
         .arg("validate")
         .assert()
         .success()
-        .stdout(contains("index valid"));
+        .stdout(contains("marketplace valid"));
 }
 
 #[test]
-fn search_json() {
+fn discover_json() {
     cmd()
-        .args([
-            "--index",
-            "../rack/index/skills.json",
-            "--json",
-            "search",
-            "lint",
-        ])
+        .args(["--marketplace", "../rack", "--json", "discover", "lint"])
         .assert()
         .success()
-        .stdout(contains("skill.lint"));
+        .stdout(contains("lint-tools"));
 }
 
 #[test]
 fn hooks_filter_agent() {
     cmd()
         .args([
-            "--index",
-            "../rack/index/skills.json",
+            "--marketplace",
+            "../rack",
             "hooks",
             "list",
             "--agent",
@@ -45,4 +40,23 @@ fn hooks_filter_agent() {
         .assert()
         .success()
         .stdout(contains("codex"));
+}
+
+#[test]
+fn install_and_list_installed() {
+    cmd()
+        .args([
+            "--marketplace",
+            "../rack",
+            "install",
+            "lint-tools@paternoster-rack",
+        ])
+        .assert()
+        .success();
+
+    cmd()
+        .arg("installed")
+        .assert()
+        .success()
+        .stdout(contains("lint-tools"));
 }
