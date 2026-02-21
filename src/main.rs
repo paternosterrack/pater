@@ -178,6 +178,10 @@ struct PolicyGeneral {
     denied_plugins: Vec<String>,
     #[serde(default)]
     blocked_permissions: Vec<String>,
+    #[serde(default)]
+    block_unknown_licenses: bool,
+    #[serde(default)]
+    allow_unknown_license_plugins: Vec<String>,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -830,7 +834,70 @@ fn enforce_policy_for_plugin(policy: &PolicyFile, p: &DiscoverItem) -> anyhow::R
     {
         anyhow::bail!("policy blocked permission in plugin: {}", p.name);
     }
+
+    if policy.general.block_unknown_licenses {
+        let cls = classify_plugin_license(p)?;
+        if cls == "unknown"
+            && !policy
+                .general
+                .allow_unknown_license_plugins
+                .iter()
+                .any(|x| x == &p.name)
+        {
+            anyhow::bail!(
+                "policy blocked unknown-license plugin: {} (add to allow_unknown_license_plugins to override)",
+                p.name
+            );
+        }
+    }
+
     Ok(())
+}
+
+fn normalize_license_token(raw: &str) -> String {
+    raw.trim().to_ascii_uppercase().replace(' ', "-")
+}
+
+fn classify_plugin_license(p: &DiscoverItem) -> anyhow::Result<&'static str> {
+    let src = rack::resolve_plugin_path(&p.marketplace_source, &p.source)?;
+    let mut tokens = Vec::new();
+
+    for name in ["LICENSE", "LICENSE.md", "COPYING"] {
+        let lp = src.join(name);
+        if lp.exists() {
+            let text = std::fs::read_to_string(lp)
+                .unwrap_or_default()
+                .to_ascii_uppercase();
+            tokens.push(text);
+        }
+    }
+
+    let manifest = src.join(".claude-plugin").join("plugin.json");
+    if manifest.exists() {
+        let raw = std::fs::read_to_string(manifest).unwrap_or_default();
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&raw) {
+            if let Some(l) = v.get("license").and_then(|x| x.as_str()) {
+                tokens.push(normalize_license_token(l));
+            }
+        }
+    }
+
+    let joined = tokens.join("\n");
+    if joined.is_empty() {
+        return Ok("unknown");
+    }
+
+    let permissive_needles = ["MIT", "APACHE", "BSD", "ISC", "UNLICENSE", "CC0"];
+    if permissive_needles.iter().any(|n| joined.contains(n)) {
+        return Ok("permissive");
+    }
+
+    let copyleft_needles = ["GPL", "AGPL", "LGPL", "MPL"];
+    if copyleft_needles.iter().any(|n| joined.contains(n)) {
+        return Ok("copyleft");
+    }
+
+    Ok("unknown")
 }
 
 fn audit(action: &str, data: serde_json::Value) {
