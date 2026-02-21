@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::time::Duration;
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -192,4 +193,79 @@ pub fn validate(m: &Marketplace) -> anyhow::Result<()> {
         }
     }
     Ok(())
+}
+
+fn repo_cache_path(source: &str) -> anyhow::Result<PathBuf> {
+    let home = std::env::var("HOME")?;
+    let mut hasher = Sha256::new();
+    hasher.update(source.as_bytes());
+    let id = hex::encode(hasher.finalize());
+    Ok(PathBuf::from(home)
+        .join(".cache")
+        .join("pater")
+        .join("repos")
+        .join(id))
+}
+
+fn ensure_repo(source: &str) -> anyhow::Result<PathBuf> {
+    let cache = repo_cache_path(source)?;
+    if cache.exists() {
+        let _ = Command::new("git")
+            .args(["-C", cache.to_string_lossy().as_ref(), "pull", "--ff-only"])
+            .output();
+        return Ok(cache);
+    }
+
+    if let Some(parent) = cache.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    let repo_url = if looks_like_github_shorthand(source) {
+        format!("https://github.com/{}.git", source)
+    } else {
+        source.to_string()
+    };
+
+    let status = Command::new("git")
+        .args([
+            "clone",
+            "--depth",
+            "1",
+            &repo_url,
+            cache.to_string_lossy().as_ref(),
+        ])
+        .status()?;
+    if !status.success() {
+        anyhow::bail!("failed to clone marketplace repo: {}", repo_url);
+    }
+    Ok(cache)
+}
+
+pub fn resolve_plugin_path(market_source: &str, plugin_source: &str) -> anyhow::Result<PathBuf> {
+    if plugin_source.starts_with("./") {
+        let mpath = Path::new(market_source);
+        if mpath.exists() {
+            let base = if mpath.is_dir() {
+                mpath.to_path_buf()
+            } else {
+                mpath.parent().unwrap_or(Path::new(".")).to_path_buf()
+            };
+            return Ok(base.join(plugin_source.trim_start_matches("./")));
+        }
+
+        if is_remote(market_source) {
+            let repo = ensure_repo(market_source)?;
+            return Ok(repo.join(plugin_source.trim_start_matches("./")));
+        }
+    }
+
+    if plugin_source.starts_with("http://")
+        || plugin_source.starts_with("https://")
+        || plugin_source.starts_with("git@")
+        || looks_like_github_shorthand(plugin_source)
+    {
+        return ensure_repo(plugin_source);
+    }
+
+    Ok(PathBuf::from(plugin_source))
 }

@@ -36,6 +36,10 @@ enum Commands {
         #[arg(long, value_enum, default_value_t = InstallScope::User)]
         scope: InstallScope,
     },
+    Adapter {
+        #[command(subcommand)]
+        command: AdapterCommands,
+    },
     Update {
         plugin: Option<String>,
         #[arg(long, default_value_t = false)]
@@ -71,12 +75,33 @@ enum MarketplaceCommands {
     Update,
 }
 
+#[derive(Subcommand, Debug)]
+enum AdapterCommands {
+    Sync {
+        #[arg(long, value_enum, default_value_t = AdapterTarget::All)]
+        target: AdapterTarget,
+    },
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, ValueEnum)]
+#[serde(rename_all = "lowercase")]
+enum AdapterTarget {
+    All,
+    Claude,
+    Codex,
+    Openclaw,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, ValueEnum)]
 #[serde(rename_all = "lowercase")]
 enum InstallScope {
     User,
     Project,
     Local,
+}
+
+fn default_scope() -> InstallScope {
+    InstallScope::User
 }
 
 #[derive(Serialize)]
@@ -101,9 +126,15 @@ struct MarketRef {
 struct InstalledPlugin {
     name: String,
     marketplace: String,
+    #[serde(default)]
+    marketplace_source: String,
     source: String,
+    #[serde(default)]
+    local_path: String,
     version: Option<String>,
+    #[serde(default)]
     permissions: Vec<String>,
+    #[serde(default = "default_scope")]
     scope: InstallScope,
 }
 
@@ -163,10 +194,13 @@ fn main() -> anyhow::Result<()> {
         Commands::Install { target, scope } => {
             let (name, market) = parse_target(&target);
             let p = show_plugin(&all_markets, &name, market.as_deref())?;
+            let local_path = rack::resolve_plugin_path(&p.marketplace_source, &p.source)?;
             let entry = InstalledPlugin {
                 name: p.name.clone(),
                 marketplace: p.marketplace.clone(),
+                marketplace_source: p.marketplace_source.clone(),
                 source: p.source.clone(),
+                local_path: local_path.to_string_lossy().to_string(),
                 version: p.version.clone(),
                 permissions: p.permissions.clone(),
                 scope,
@@ -174,6 +208,7 @@ fn main() -> anyhow::Result<()> {
             upsert_installed(&mut state, entry.clone());
             save_state(&state)?;
             save_lockfile(&state)?;
+            sync_installed(&state, AdapterTarget::All)?;
 
             if cli.json {
                 println!(
@@ -185,8 +220,25 @@ fn main() -> anyhow::Result<()> {
                 );
             } else {
                 println!("installed {}@{}", entry.name, entry.marketplace);
+                println!("adapter sync complete (claude/codex/openclaw)");
             }
         }
+        Commands::Adapter { command } => match command {
+            AdapterCommands::Sync { target } => {
+                sync_installed(&state, target.clone())?;
+                if cli.json {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&JsonOut {
+                            ok: true,
+                            data: "synced"
+                        })?
+                    );
+                } else {
+                    println!("adapter sync completed");
+                }
+            }
+        },
         Commands::Update {
             plugin,
             allow_permission_increase,
@@ -199,6 +251,7 @@ fn main() -> anyhow::Result<()> {
             )?;
             save_state(&state)?;
             save_lockfile(&state)?;
+            sync_installed(&state, AdapterTarget::All)?;
             print_out(cli.json, &report, |r| format!("{}\t{}", r.name, r.status))?;
         }
         Commands::Remove { plugin } => {
@@ -206,6 +259,7 @@ fn main() -> anyhow::Result<()> {
             state.installed.retain(|p| p.name != plugin);
             save_state(&state)?;
             save_lockfile(&state)?;
+            sync_installed(&state, AdapterTarget::All)?;
             let removed = before.saturating_sub(state.installed.len());
             if cli.json {
                 println!(
@@ -302,6 +356,7 @@ fn main() -> anyhow::Result<()> {
 #[derive(Serialize, Clone)]
 struct DiscoverItem {
     marketplace: String,
+    marketplace_source: String,
     name: String,
     description: String,
     version: Option<String>,
@@ -360,6 +415,11 @@ fn update_plugins(
             };
             installed.version = latest.version.clone();
             installed.permissions = latest.permissions.clone();
+            installed.source = latest.source.clone();
+            installed.marketplace_source = latest.marketplace_source.clone();
+            if let Ok(p) = rack::resolve_plugin_path(&latest.marketplace_source, &latest.source) {
+                installed.local_path = p.to_string_lossy().to_string();
+            }
             reports.push(report);
         } else {
             reports.push(UpdateReport {
@@ -404,6 +464,7 @@ fn discover_across(
         for p in rack::discover(&loaded, query) {
             out.push(DiscoverItem {
                 marketplace: loaded.name.clone(),
+                marketplace_source: m.source.clone(),
                 name: p.name.clone(),
                 description: p.description.clone().unwrap_or_default(),
                 version: p.version.clone(),
@@ -430,6 +491,7 @@ fn show_plugin(
         if let Ok(p) = rack::show(&loaded, name) {
             return Ok(DiscoverItem {
                 marketplace: loaded.name.clone(),
+                marketplace_source: m.source.clone(),
                 name: p.name.clone(),
                 description: p.description.clone().unwrap_or_default(),
                 version: p.version.clone(),
@@ -451,6 +513,66 @@ fn upsert_installed(state: &mut State, entry: InstalledPlugin) {
     } else {
         state.installed.push(entry);
     }
+}
+
+fn copy_dir_all(src: &std::path::Path, dst: &std::path::Path) -> anyhow::Result<()> {
+    if dst.exists() {
+        std::fs::remove_dir_all(dst)?;
+    }
+    std::fs::create_dir_all(dst)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let ty = entry.file_type()?;
+        let to = dst.join(entry.file_name());
+        if ty.is_dir() {
+            copy_dir_all(&entry.path(), &to)?;
+        } else {
+            std::fs::copy(entry.path(), to)?;
+        }
+    }
+    Ok(())
+}
+
+fn adapter_base(target: &AdapterTarget) -> anyhow::Result<PathBuf> {
+    let home = std::env::var("HOME")?;
+    let p = match target {
+        AdapterTarget::Claude => PathBuf::from(home).join(".claude/plugins"),
+        AdapterTarget::Codex => PathBuf::from(home).join(".codex/plugins"),
+        AdapterTarget::Openclaw => PathBuf::from(home).join(".openclaw/workspace/skills"),
+        AdapterTarget::All => PathBuf::from(home).join(".pater/adapters"),
+    };
+    Ok(p)
+}
+
+fn sync_target(state: &State, target: AdapterTarget) -> anyhow::Result<()> {
+    let base = adapter_base(&target)?;
+    std::fs::create_dir_all(&base)?;
+    for p in &state.installed {
+        let mut src = PathBuf::from(&p.local_path);
+        if !src.exists() {
+            if let Ok(r) = rack::resolve_plugin_path(&p.marketplace_source, &p.source) {
+                src = r;
+            }
+        }
+        if !src.exists() {
+            continue;
+        }
+        let dst = base.join(&p.name);
+        copy_dir_all(&src, &dst)?;
+    }
+    Ok(())
+}
+
+fn sync_installed(state: &State, target: AdapterTarget) -> anyhow::Result<()> {
+    match target {
+        AdapterTarget::All => {
+            sync_target(state, AdapterTarget::Claude)?;
+            sync_target(state, AdapterTarget::Codex)?;
+            sync_target(state, AdapterTarget::Openclaw)?;
+        }
+        t => sync_target(state, t)?,
+    }
+    Ok(())
 }
 
 fn parse_target(target: &str) -> (String, Option<String>) {
