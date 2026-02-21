@@ -85,6 +85,7 @@ enum MarketplaceCommands {
 enum TrustCommands {
     Init,
     List,
+    Status,
 }
 
 #[derive(Subcommand, Debug)]
@@ -205,6 +206,25 @@ fn main() -> anyhow::Result<()> {
             TrustCommands::List => {
                 let keys = list_pubkeys()?;
                 print_out(cli.json, &keys, |k| k.to_string())?;
+            }
+            TrustCommands::Status => {
+                let keys = list_pubkeys()?;
+                let sig_ok =
+                    verify_marketplace_signature(DEFAULT_MARKETPLACE_SOURCE).unwrap_or(false);
+                let status = TrustStatus {
+                    require_signed_marketplace: policy.general.require_signed_marketplace,
+                    trusted_key_count: keys.len(),
+                    default_marketplace: DEFAULT_MARKETPLACE_SOURCE.to_string(),
+                    default_marketplace_signature_ok: sig_ok,
+                };
+                print_one(cli.json, status, |s| {
+                    format!(
+                        "signed_required={} keys={} default_sig_ok={}",
+                        s.require_signed_marketplace,
+                        s.trusted_key_count,
+                        s.default_marketplace_signature_ok
+                    )
+                })?;
             }
         }
         return Ok(());
@@ -517,6 +537,14 @@ struct DoctorReport {
     wrappers: Vec<CheckItem>,
 }
 
+#[derive(Serialize)]
+struct TrustStatus {
+    require_signed_marketplace: bool,
+    trusted_key_count: usize,
+    default_marketplace: String,
+    default_marketplace_signature_ok: bool,
+}
+
 fn update_plugins(
     state: &mut State,
     markets: &[MarketRef],
@@ -737,17 +765,34 @@ fn load_trusted_pubkeys() -> anyhow::Result<Vec<ed25519_dalek::VerifyingKey>> {
 
 fn verify_marketplace_signature(source: &str) -> anyhow::Result<bool> {
     let raw = rack::load_marketplace_raw(source)?;
-    let sig_hex = rack::load_marketplace_signature(source)?;
-    let sig_bytes = hex::decode(sig_hex.trim())?;
-    let sig_arr: [u8; 64] = sig_bytes
-        .as_slice()
-        .try_into()
-        .map_err(|_| anyhow::anyhow!("invalid signature length"))?;
-    let sig = ed25519_dalek::Signature::from_bytes(&sig_arr);
+    let sigs_raw = rack::load_marketplace_signature(source)?;
     let keys = load_trusted_pubkeys()?;
-    for k in keys {
-        if k.verify_strict(raw.as_bytes(), &sig).is_ok() {
-            return Ok(true);
+    if keys.is_empty() {
+        return Ok(false);
+    }
+
+    let mut signatures = Vec::new();
+    for line in sigs_raw.lines() {
+        let s = line.trim();
+        if s.is_empty() || s.starts_with('#') {
+            continue;
+        }
+        let sig_bytes = match hex::decode(s) {
+            Ok(b) => b,
+            Err(_) => continue,
+        };
+        let sig_arr: [u8; 64] = match sig_bytes.as_slice().try_into() {
+            Ok(a) => a,
+            Err(_) => continue,
+        };
+        signatures.push(ed25519_dalek::Signature::from_bytes(&sig_arr));
+    }
+
+    for sig in signatures {
+        for k in &keys {
+            if k.verify_strict(raw.as_bytes(), &sig).is_ok() {
+                return Ok(true);
+            }
         }
     }
     Ok(false)
