@@ -4,6 +4,8 @@ use std::path::PathBuf;
 
 mod rack;
 
+const DEFAULT_MARKETPLACE_SOURCE: &str = "paternosterrack/rack";
+
 #[derive(Parser, Debug)]
 #[command(name = "pater", version, about = "Paternoster Rack CLI")]
 struct Cli {
@@ -12,8 +14,8 @@ struct Cli {
     #[arg(
         long,
         global = true,
-        default_value = "../rack",
-        help = "Default marketplace source (dir or marketplace.json)"
+        default_value = DEFAULT_MARKETPLACE_SOURCE,
+        help = "Default marketplace source (dir, marketplace.json, url, or owner/repo)"
     )]
     marketplace: String,
     #[command(subcommand)]
@@ -90,12 +92,30 @@ fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     let mut state = load_state()?;
 
+    if !state
+        .marketplaces
+        .iter()
+        .any(|m| m.source == DEFAULT_MARKETPLACE_SOURCE)
+    {
+        state.marketplaces.push(MarketRef {
+            name: "paternoster-rack".to_string(),
+            source: DEFAULT_MARKETPLACE_SOURCE.to_string(),
+        });
+        save_state(&state)?;
+    }
+
+    for m in &state.marketplaces {
+        let _ = rack::refresh_marketplace(&m.source);
+    }
+    let _ = rack::refresh_marketplace(&cli.marketplace);
+
     let default_market = rack::load_marketplace(&cli.marketplace)?;
     let mut all_markets = vec![MarketRef {
         name: default_market.name.clone(),
         source: cli.marketplace.clone(),
     }];
     all_markets.extend(state.marketplaces.clone());
+    dedupe_markets(&mut all_markets);
 
     match cli.command {
         Commands::Discover { query } => {
@@ -225,6 +245,7 @@ fn main() -> anyhow::Result<()> {
             MarketplaceCommands::Update => {
                 let mut checked = 0usize;
                 for m in &state.marketplaces {
+                    rack::refresh_marketplace(&m.source)?;
                     let _ = rack::load_marketplace(&m.source)?;
                     checked += 1;
                 }
@@ -299,6 +320,11 @@ fn show_plugin(
         }
     }
     anyhow::bail!("plugin not found: {}", name)
+}
+
+fn dedupe_markets(markets: &mut Vec<MarketRef>) {
+    let mut seen = std::collections::HashSet::new();
+    markets.retain(|m| seen.insert(format!("{}::{}", m.name, m.source)));
 }
 
 fn parse_target(target: &str) -> (String, Option<String>) {

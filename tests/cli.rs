@@ -1,15 +1,19 @@
 use assert_cmd::cargo::cargo_bin_cmd;
 use assert_cmd::Command;
 use predicates::str::contains;
+use tempfile::TempDir;
 
-fn cmd() -> Command {
-    cargo_bin_cmd!("pater")
+fn cmd_with_fresh_home() -> (Command, TempDir) {
+    let tmp = TempDir::new().unwrap();
+    let mut cmd = cargo_bin_cmd!("pater");
+    cmd.env("HOME", tmp.path());
+    (cmd, tmp)
 }
 
 #[test]
 fn validate_marketplace() {
-    cmd()
-        .arg("--marketplace")
+    let (mut cmd, _home) = cmd_with_fresh_home();
+    cmd.arg("--marketplace")
         .arg("../rack")
         .arg("validate")
         .assert()
@@ -19,8 +23,8 @@ fn validate_marketplace() {
 
 #[test]
 fn discover_json() {
-    cmd()
-        .args(["--marketplace", "../rack", "--json", "discover", "commit"])
+    let (mut cmd, _home) = cmd_with_fresh_home();
+    cmd.args(["--marketplace", "../rack", "--json", "discover", "commit"])
         .assert()
         .success()
         .stdout(contains("commit-commands"));
@@ -28,15 +32,19 @@ fn discover_json() {
 
 #[test]
 fn hooks_list_prints() {
-    cmd()
-        .args(["--marketplace", "../rack", "hooks", "list"])
+    let (mut cmd, _home) = cmd_with_fresh_home();
+    cmd.args(["--marketplace", "../rack", "hooks", "list"])
         .assert()
         .success();
 }
 
 #[test]
 fn install_and_list_installed() {
-    cmd()
+    let home = TempDir::new().unwrap();
+
+    let mut install = cargo_bin_cmd!("pater");
+    install.env("HOME", home.path());
+    install
         .args([
             "--marketplace",
             "../rack",
@@ -46,8 +54,9 @@ fn install_and_list_installed() {
         .assert()
         .success();
 
-    cmd()
-        .arg("installed")
+    let mut list = cargo_bin_cmd!("pater");
+    list.env("HOME", home.path());
+    list.arg("installed")
         .assert()
         .success()
         .stdout(contains("commit-commands"));
