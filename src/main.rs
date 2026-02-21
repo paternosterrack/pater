@@ -5,8 +5,11 @@ use std::path::PathBuf;
 
 mod cli;
 mod rack;
+mod services;
 
 use cli::*;
+use services::policy::source_matches_allowed;
+use services::release_check::build_release_check_report;
 
 const OFFICIAL_RACK_PUBKEY_HEX: &str =
     "5aefcc2a6716ef9fab24dc3865013e29a8d579e4dda33bf753a7cd7a8d14450a";
@@ -780,35 +783,7 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             };
             let doctor = adapter_doctor(&state)?;
             let rack_license_audit = run_rack_license_audit(&cli.marketplace);
-            let rack_audit_ok =
-                rack_license_audit == "ok" || rack_license_audit == "not_applicable";
-            let overall = if trust.default_marketplace_signature_ok
-                && doctor.overall == "ok"
-                && rack_audit_ok
-            {
-                "ok"
-            } else {
-                "needs_attention"
-            }
-            .to_string();
-
-            let mut recommendations = Vec::new();
-            if !trust.default_marketplace_signature_ok {
-                recommendations.push("Run `pater trust init` and ensure marketplace.sig is published for default marketplace.".to_string());
-            }
-            if doctor.overall != "ok" {
-                recommendations.push("Run `pater adapter sync --target all` and `pater adapter doctor` until all adapter checks are ok.".to_string());
-            }
-            if rack_license_audit == "failed" || rack_license_audit == "error" {
-                recommendations.push("Run `pater rack license-audit --rack-dir <rack-dir>` and resolve unknown/proprietary plugins before release.".to_string());
-            }
-            let report = ReleaseCheckReport {
-                overall,
-                trust,
-                doctor,
-                rack_license_audit,
-                recommendations,
-            };
+            let report = build_release_check_report(trust, doctor, rack_license_audit);
             print_one(cli.json, report, |r| {
                 format!("release-check: {}", r.overall)
             })?;
@@ -878,26 +853,26 @@ struct UpdateReport {
 }
 
 #[derive(Serialize)]
-struct SmokeReport {
-    adapter: String,
-    status: String,
-    checked_plugins: usize,
-    missing_plugins: Vec<String>,
+pub struct SmokeReport {
+    pub adapter: String,
+    pub status: String,
+    pub checked_plugins: usize,
+    pub missing_plugins: Vec<String>,
 }
 
 #[derive(Serialize)]
-struct CheckItem {
-    name: String,
-    status: String,
+pub struct CheckItem {
+    pub name: String,
+    pub status: String,
 }
 
 #[derive(Serialize)]
-struct DoctorReport {
-    overall: String,
-    path_has_local_bin: bool,
-    smoke: Vec<SmokeReport>,
-    configs: Vec<CheckItem>,
-    wrappers: Vec<CheckItem>,
+pub struct DoctorReport {
+    pub overall: String,
+    pub path_has_local_bin: bool,
+    pub smoke: Vec<SmokeReport>,
+    pub configs: Vec<CheckItem>,
+    pub wrappers: Vec<CheckItem>,
 }
 
 #[derive(Serialize)]
@@ -923,20 +898,20 @@ struct PlanReport {
 }
 
 #[derive(Serialize)]
-struct TrustStatus {
-    require_signed_marketplace: bool,
-    trusted_key_count: usize,
-    default_marketplace: String,
-    default_marketplace_signature_ok: bool,
+pub struct TrustStatus {
+    pub require_signed_marketplace: bool,
+    pub trusted_key_count: usize,
+    pub default_marketplace: String,
+    pub default_marketplace_signature_ok: bool,
 }
 
 #[derive(Serialize)]
-struct ReleaseCheckReport {
-    overall: String,
-    trust: TrustStatus,
-    doctor: DoctorReport,
-    rack_license_audit: String,
-    recommendations: Vec<String>,
+pub struct ReleaseCheckReport {
+    pub overall: String,
+    pub trust: TrustStatus,
+    pub doctor: DoctorReport,
+    pub rack_license_audit: String,
+    pub recommendations: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -1336,58 +1311,6 @@ fn enforce_policy_for_plugin(policy: &PolicyFile, p: &DiscoverItem) -> anyhow::R
     }
 
     Ok(())
-}
-
-fn canonical_market_source_id(raw: &str) -> String {
-    let s = raw.trim();
-
-    // GitHub shorthand: owner/repo
-    if s.split('/').count() == 2 && !s.contains("://") && !s.starts_with('.') {
-        return format!("github:{}", s.to_ascii_lowercase());
-    }
-
-    // GitHub URLs and raw.githubusercontent.com URLs
-    if let Some(rest) = s.strip_prefix("https://github.com/") {
-        let parts: Vec<&str> = rest.split('/').collect();
-        if parts.len() >= 2 {
-            let owner = parts[0];
-            let repo = parts[1].trim_end_matches(".git");
-            if !owner.is_empty() && !repo.is_empty() {
-                return format!(
-                    "github:{}/{}",
-                    owner.to_ascii_lowercase(),
-                    repo.to_ascii_lowercase()
-                );
-            }
-        }
-    }
-    if let Some(rest) = s.strip_prefix("https://raw.githubusercontent.com/") {
-        let parts: Vec<&str> = rest.split('/').collect();
-        if parts.len() >= 2 {
-            let owner = parts[0];
-            let repo = parts[1];
-            if !owner.is_empty() && !repo.is_empty() {
-                return format!(
-                    "github:{}/{}",
-                    owner.to_ascii_lowercase(),
-                    repo.to_ascii_lowercase()
-                );
-            }
-        }
-    }
-
-    let p = PathBuf::from(s);
-    if p.exists() {
-        if let Ok(c) = p.canonicalize() {
-            return format!("path:{}", c.to_string_lossy());
-        }
-    }
-
-    s.trim_end_matches('/').to_ascii_lowercase()
-}
-
-fn source_matches_allowed(source: &str, allowed: &str) -> bool {
-    canonical_market_source_id(source) == canonical_market_source_id(allowed)
 }
 
 fn normalize_license_token(raw: &str) -> String {
@@ -2478,37 +2401,4 @@ fn print_one<T: Serialize>(json: bool, data: T, row: impl Fn(&T) -> String) -> a
         println!("{}", row(&data));
     }
     Ok(())
-}
-
-#[cfg(test)]
-mod unit_tests {
-    use super::{canonical_market_source_id, source_matches_allowed};
-
-    #[test]
-    fn source_matching_normalizes_github_forms() {
-        assert!(source_matches_allowed(
-            "paternosterrack/rack",
-            "https://github.com/paternosterrack/rack.git"
-        ));
-        assert!(source_matches_allowed(
-            "paternosterrack/rack",
-            "https://raw.githubusercontent.com/paternosterrack/rack/main/.pater/marketplace.json"
-        ));
-    }
-
-    #[test]
-    fn source_matching_rejects_prefix_tricks() {
-        assert!(!source_matches_allowed(
-            "https://github.com/paternosterrack/rack-evil",
-            "https://github.com/paternosterrack/rack"
-        ));
-    }
-
-    #[test]
-    fn canonical_id_is_stable_for_github_shorthand() {
-        assert_eq!(
-            canonical_market_source_id("PaternosterRack/Rack"),
-            "github:paternosterrack/rack"
-        );
-    }
 }
