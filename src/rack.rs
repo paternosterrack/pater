@@ -72,6 +72,21 @@ fn normalize_source(source: &str) -> String {
     }
 }
 
+fn normalize_sig_source(source: &str) -> String {
+    if looks_like_github_shorthand(source) {
+        format!(
+            "https://raw.githubusercontent.com/{}/main/.pater/marketplace.sig",
+            source
+        )
+    } else if source.ends_with("marketplace.json") {
+        source.replace("marketplace.json", "marketplace.sig")
+    } else if source.starts_with("http://") || source.starts_with("https://") {
+        format!("{}/.pater/marketplace.sig", source.trim_end_matches('/'))
+    } else {
+        source.to_string()
+    }
+}
+
 fn is_remote(source: &str) -> bool {
     source.starts_with("http://")
         || source.starts_with("https://")
@@ -108,6 +123,15 @@ fn fetch_marketplace_text(source: &str, timeout_ms: u64) -> anyhow::Result<Strin
     Ok(resp.text()?)
 }
 
+fn fetch_signature_text(source: &str, timeout_ms: u64) -> anyhow::Result<String> {
+    let url = normalize_sig_source(source);
+    let client = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_millis(timeout_ms))
+        .build()?;
+    let resp = client.get(url).send()?.error_for_status()?;
+    Ok(resp.text()?)
+}
+
 pub fn refresh_marketplace(source: &str) -> anyhow::Result<()> {
     if !is_remote(source) {
         return Ok(());
@@ -121,7 +145,7 @@ pub fn refresh_marketplace(source: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub fn load_marketplace(source: &str) -> anyhow::Result<Marketplace> {
+pub fn load_marketplace_raw(source: &str) -> anyhow::Result<String> {
     if is_remote(source) {
         let cache = cache_path(source)?;
         match fetch_marketplace_text(source, 2500) {
@@ -130,18 +154,36 @@ pub fn load_marketplace(source: &str) -> anyhow::Result<Marketplace> {
                     std::fs::create_dir_all(parent)?;
                 }
                 std::fs::write(&cache, &body)?;
-                return Ok(serde_json::from_str(&body)?);
+                return Ok(body);
             }
             Err(_) if cache.exists() => {
                 let raw = std::fs::read_to_string(cache)?;
-                return Ok(serde_json::from_str(&raw)?);
+                return Ok(raw);
             }
             Err(e) => return Err(e),
         }
     }
 
     let file = resolve_marketplace_file(source);
-    let raw = std::fs::read_to_string(file)?;
+    Ok(std::fs::read_to_string(file)?)
+}
+
+pub fn load_marketplace_signature(source: &str) -> anyhow::Result<String> {
+    if is_remote(source) {
+        return fetch_signature_text(source, 2500);
+    }
+
+    let p = Path::new(source);
+    let sig_path = if p.is_dir() {
+        p.join(".pater").join("marketplace.sig")
+    } else {
+        p.parent().unwrap_or(Path::new(".")).join("marketplace.sig")
+    };
+    Ok(std::fs::read_to_string(sig_path)?)
+}
+
+pub fn load_marketplace(source: &str) -> anyhow::Result<Marketplace> {
+    let raw = load_marketplace_raw(source)?;
     Ok(serde_json::from_str(&raw)?)
 }
 

@@ -149,9 +149,28 @@ struct Lockfile {
     plugins: Vec<InstalledPlugin>,
 }
 
+#[derive(Debug, Deserialize)]
+struct PolicyFile {
+    #[serde(default)]
+    general: PolicyGeneral,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct PolicyGeneral {
+    #[serde(default)]
+    require_signed_marketplace: bool,
+    #[serde(default)]
+    allowed_sources: Vec<String>,
+    #[serde(default)]
+    denied_plugins: Vec<String>,
+    #[serde(default)]
+    blocked_permissions: Vec<String>,
+}
+
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     let mut state = load_state()?;
+    let policy = load_policy()?;
 
     ensure_default_marketplace(&mut state)?;
 
@@ -160,7 +179,7 @@ fn main() -> anyhow::Result<()> {
     }
     let _ = rack::refresh_marketplace(&cli.marketplace);
 
-    let default_market = rack::load_marketplace(&cli.marketplace)?;
+    let default_market = checked_load_marketplace(&cli.marketplace, &policy)?;
     let mut all_markets = vec![MarketRef {
         name: default_market.name.clone(),
         source: cli.marketplace.clone(),
@@ -170,14 +189,14 @@ fn main() -> anyhow::Result<()> {
 
     match cli.command {
         Commands::Discover { query } => {
-            let items = discover_across(&all_markets, query.as_deref())?;
+            let items = discover_across(&all_markets, query.as_deref(), &policy)?;
             print_out(cli.json, &items, |p| {
                 format!("{}\t{}\t{}", p.marketplace, p.name, p.description)
             })?;
         }
         Commands::Show { plugin } => {
             let (name, market) = parse_target(&plugin);
-            let p = show_plugin(&all_markets, &name, market.as_deref())?;
+            let p = show_plugin(&all_markets, &name, market.as_deref(), &policy)?;
             if cli.json {
                 println!(
                     "{}",
@@ -198,7 +217,8 @@ fn main() -> anyhow::Result<()> {
         }
         Commands::Install { target, scope } => {
             let (name, market) = parse_target(&target);
-            let p = show_plugin(&all_markets, &name, market.as_deref())?;
+            let p = show_plugin(&all_markets, &name, market.as_deref(), &policy)?;
+            enforce_policy_for_plugin(&policy, &p)?;
             let source_path = rack::resolve_plugin_path(&p.marketplace_source, &p.source)?;
             let local_path = materialize_plugin(&p.name, &source_path)?;
             let entry = InstalledPlugin {
@@ -212,6 +232,10 @@ fn main() -> anyhow::Result<()> {
                 scope,
             };
             upsert_installed(&mut state, entry.clone());
+            audit(
+                "install",
+                serde_json::json!({"plugin": entry.name, "marketplace": entry.marketplace}),
+            );
             save_state(&state)?;
             save_lockfile(&state)?;
             sync_installed(&state, AdapterTarget::All)?;
@@ -232,6 +256,10 @@ fn main() -> anyhow::Result<()> {
         Commands::Adapter { command } => match command {
             AdapterCommands::Sync { target } => {
                 sync_installed(&state, target.clone())?;
+                audit(
+                    "adapter_sync",
+                    serde_json::json!({"target": format!("{:?}", target)}),
+                );
                 if cli.json {
                     println!(
                         "{}",
@@ -262,6 +290,10 @@ fn main() -> anyhow::Result<()> {
             }
             AdapterCommands::Doctor => {
                 let report = adapter_doctor(&state)?;
+                audit(
+                    "adapter_doctor",
+                    serde_json::json!({"overall": report.overall}),
+                );
                 if cli.json {
                     println!(
                         "{}",
@@ -294,7 +326,12 @@ fn main() -> anyhow::Result<()> {
                 &all_markets,
                 plugin.as_deref(),
                 allow_permission_increase,
+                &policy,
             )?;
+            audit(
+                "update",
+                serde_json::json!({"plugin": plugin, "count": report.len()}),
+            );
             save_state(&state)?;
             save_lockfile(&state)?;
             sync_installed(&state, AdapterTarget::All)?;
@@ -303,6 +340,7 @@ fn main() -> anyhow::Result<()> {
         Commands::Remove { plugin } => {
             let before = state.installed.len();
             state.installed.retain(|p| p.name != plugin);
+            audit("remove", serde_json::json!({"plugin": plugin}));
             save_state(&state)?;
             save_lockfile(&state)?;
             sync_installed(&state, AdapterTarget::All)?;
@@ -358,7 +396,7 @@ fn main() -> anyhow::Result<()> {
         }
         Commands::Marketplace { command } => match command {
             MarketplaceCommands::Add { source } => {
-                let m = rack::load_marketplace(&source)?;
+                let m = checked_load_marketplace(&source, &policy)?;
                 let mr = MarketRef {
                     name: m.name,
                     source,
@@ -378,7 +416,7 @@ fn main() -> anyhow::Result<()> {
                 let mut checked = 0usize;
                 for m in &state.marketplaces {
                     rack::refresh_marketplace(&m.source)?;
-                    let _ = rack::load_marketplace(&m.source)?;
+                    let _ = checked_load_marketplace(&m.source, &policy)?;
                     checked += 1;
                 }
                 if cli.json {
@@ -447,13 +485,20 @@ fn update_plugins(
     markets: &[MarketRef],
     only: Option<&str>,
     allow_permission_increase: bool,
+    policy: &PolicyFile,
 ) -> anyhow::Result<Vec<UpdateReport>> {
     let mut reports = Vec::new();
     for installed in &mut state.installed {
         if only.map(|o| o != installed.name).unwrap_or(false) {
             continue;
         }
-        let latest = show_plugin(markets, &installed.name, Some(&installed.marketplace))?;
+        let latest = show_plugin(
+            markets,
+            &installed.name,
+            Some(&installed.marketplace),
+            policy,
+        )?;
+        enforce_policy_for_plugin(policy, &latest)?;
         let old_permissions: HashSet<_> = installed.permissions.iter().cloned().collect();
         let new_permissions: HashSet<_> = latest.permissions.iter().cloned().collect();
         let added_permissions: Vec<String> = new_permissions
@@ -528,10 +573,11 @@ fn dedupe_markets(markets: &mut Vec<MarketRef>) {
 fn discover_across(
     markets: &[MarketRef],
     query: Option<&str>,
+    policy: &PolicyFile,
 ) -> anyhow::Result<Vec<DiscoverItem>> {
     let mut out = Vec::new();
     for m in markets {
-        let loaded = rack::load_marketplace(&m.source)?;
+        let loaded = checked_load_marketplace(&m.source, policy)?;
         for p in rack::discover(&loaded, query) {
             out.push(DiscoverItem {
                 marketplace: loaded.name.clone(),
@@ -551,9 +597,10 @@ fn show_plugin(
     markets: &[MarketRef],
     name: &str,
     marketplace: Option<&str>,
+    policy: &PolicyFile,
 ) -> anyhow::Result<DiscoverItem> {
     for m in markets {
-        let loaded = rack::load_marketplace(&m.source)?;
+        let loaded = checked_load_marketplace(&m.source, policy)?;
         if let Some(filter) = marketplace {
             if loaded.name != filter {
                 continue;
@@ -572,6 +619,127 @@ fn show_plugin(
         }
     }
     anyhow::bail!("plugin not found: {}", name)
+}
+
+fn load_policy() -> anyhow::Result<PolicyFile> {
+    let home = std::env::var("HOME")?;
+    let path = PathBuf::from(home).join(".config/pater/policy.toml");
+    if !path.exists() {
+        return Ok(PolicyFile {
+            general: PolicyGeneral::default(),
+        });
+    }
+    let raw = std::fs::read_to_string(path)?;
+    Ok(toml::from_str(&raw)?)
+}
+
+fn load_trusted_pubkeys() -> anyhow::Result<Vec<ed25519_dalek::VerifyingKey>> {
+    let home = std::env::var("HOME")?;
+    let path = PathBuf::from(home).join(".config/pater/trust/pubkeys.txt");
+    if !path.exists() {
+        return Ok(vec![]);
+    }
+    let mut out = Vec::new();
+    for line in std::fs::read_to_string(path)?.lines() {
+        let l = line.trim();
+        if l.is_empty() || l.starts_with('#') {
+            continue;
+        }
+        let bytes = hex::decode(l)?;
+        if bytes.len() != 32 {
+            continue;
+        }
+        let mut arr = [0u8; 32];
+        arr.copy_from_slice(&bytes);
+        if let Ok(k) = ed25519_dalek::VerifyingKey::from_bytes(&arr) {
+            out.push(k);
+        }
+    }
+    Ok(out)
+}
+
+fn verify_marketplace_signature(source: &str) -> anyhow::Result<bool> {
+    let raw = rack::load_marketplace_raw(source)?;
+    let sig_hex = rack::load_marketplace_signature(source)?;
+    let sig_bytes = hex::decode(sig_hex.trim())?;
+    let sig_arr: [u8; 64] = sig_bytes
+        .as_slice()
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("invalid signature length"))?;
+    let sig = ed25519_dalek::Signature::from_bytes(&sig_arr);
+    let keys = load_trusted_pubkeys()?;
+    for k in keys {
+        if k.verify_strict(raw.as_bytes(), &sig).is_ok() {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn checked_load_marketplace(
+    source: &str,
+    policy: &PolicyFile,
+) -> anyhow::Result<rack::Marketplace> {
+    if policy.general.require_signed_marketplace {
+        let ok = verify_marketplace_signature(source)?;
+        if !ok {
+            anyhow::bail!("marketplace signature verification failed: {}", source);
+        }
+    }
+    rack::load_marketplace(source)
+}
+
+fn enforce_policy_for_plugin(policy: &PolicyFile, p: &DiscoverItem) -> anyhow::Result<()> {
+    if policy.general.denied_plugins.iter().any(|x| x == &p.name) {
+        anyhow::bail!("policy denied plugin: {}", p.name);
+    }
+    if !policy.general.allowed_sources.is_empty()
+        && !policy
+            .general
+            .allowed_sources
+            .iter()
+            .any(|s| p.marketplace_source.starts_with(s))
+    {
+        anyhow::bail!("policy denied source: {}", p.marketplace_source);
+    }
+    if p.permissions
+        .iter()
+        .any(|perm| policy.general.blocked_permissions.contains(perm))
+    {
+        anyhow::bail!("policy blocked permission in plugin: {}", p.name);
+    }
+    Ok(())
+}
+
+fn audit(action: &str, data: serde_json::Value) {
+    let home = match std::env::var("HOME") {
+        Ok(h) => h,
+        Err(_) => return,
+    };
+    let path = PathBuf::from(home).join(".config/pater/audit.jsonl");
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let event = serde_json::json!({
+        "ts": chrono_like_now(),
+        "action": action,
+        "data": data
+    });
+    let line = format!("{}\n", event);
+    let _ = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .and_then(|mut f| std::io::Write::write_all(&mut f, line.as_bytes()));
+}
+
+fn chrono_like_now() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    ts.to_string()
 }
 
 fn upsert_installed(state: &mut State, entry: InstalledPlugin) {
