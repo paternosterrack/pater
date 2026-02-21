@@ -204,7 +204,20 @@ fn rack_commands_success_paths() {
         .unwrap();
     assert!(status.success());
 
-    // rack sync
+    // rack doctor + sync
+    let out = run(
+        &home,
+        &[
+            "rack",
+            "doctor",
+            "--rack-dir",
+            rack.path().to_str().unwrap(),
+            "--sign-key",
+            key.to_str().unwrap(),
+        ],
+    );
+    assert!(out.contains("rack doctor"));
+
     let out = run(
         &home,
         &["rack", "sync", "--rack-dir", rack.path().to_str().unwrap()],

@@ -95,6 +95,12 @@ enum TrustCommands {
 
 #[derive(Subcommand, Debug)]
 enum RackCommands {
+    Doctor {
+        #[arg(long, default_value = "../rack")]
+        rack_dir: String,
+        #[arg(long)]
+        sign_key: Option<String>,
+    },
     Sync {
         #[arg(long, default_value = "../rack")]
         rack_dir: String,
@@ -273,6 +279,23 @@ fn main() -> anyhow::Result<()> {
 
     if let Commands::Rack { command } = &cli.command {
         match command {
+            RackCommands::Doctor { rack_dir, sign_key } => {
+                let report = rack_doctor(rack_dir, sign_key.as_deref());
+                if cli.json {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&JsonOut {
+                            ok: report.overall == "ok",
+                            data: report
+                        })?
+                    );
+                } else {
+                    println!("rack doctor: {}", report.overall);
+                    for c in report.checks {
+                        println!("{}\t{}", c.name, c.status);
+                    }
+                }
+            }
             RackCommands::Sync { rack_dir } => {
                 let count = rack_sync_upstreams(rack_dir)?;
                 print_one(cli.json, count, |c| format!("synced {} plugins", c))?;
@@ -703,6 +726,12 @@ struct RackLicenseAuditSummary {
     total: usize,
 }
 
+#[derive(Serialize)]
+struct RackDoctorReport {
+    overall: String,
+    checks: Vec<CheckItem>,
+}
+
 fn update_plugins(
     state: &mut State,
     markets: &[MarketRef],
@@ -1070,6 +1099,95 @@ fn classify_plugin_license(p: &DiscoverItem) -> anyhow::Result<&'static str> {
     }
 
     Ok("unknown")
+}
+
+fn rack_doctor(rack_dir: &str, sign_key: Option<&str>) -> RackDoctorReport {
+    let root = PathBuf::from(rack_dir);
+    let checks = vec![
+        CheckItem {
+            name: "rack_dir_exists".to_string(),
+            status: if root.exists() { "ok" } else { "missing" }.to_string(),
+        },
+        CheckItem {
+            name: "marketplace_json".to_string(),
+            status: if root.join(".pater/marketplace.json").exists() {
+                "ok"
+            } else {
+                "missing"
+            }
+            .to_string(),
+        },
+        CheckItem {
+            name: "upstream_official_snapshot".to_string(),
+            status: if root
+                .join("_upstreams/claude-plugins-official/.claude-plugin/marketplace.json")
+                .exists()
+            {
+                "ok"
+            } else {
+                "missing"
+            }
+            .to_string(),
+        },
+        CheckItem {
+            name: "upstream_claude_code_snapshot".to_string(),
+            status: if root
+                .join("_upstreams/claude-code/.claude-plugin/marketplace.json")
+                .exists()
+            {
+                "ok"
+            } else {
+                "missing"
+            }
+            .to_string(),
+        },
+        CheckItem {
+            name: "upstream_skills_snapshot".to_string(),
+            status: if root
+                .join("_upstreams/skills/.claude-plugin/marketplace.json")
+                .exists()
+            {
+                "ok"
+            } else {
+                "missing"
+            }
+            .to_string(),
+        },
+        CheckItem {
+            name: "sign_key".to_string(),
+            status: match sign_key {
+                Some(k) if PathBuf::from(k).exists() => "ok".to_string(),
+                Some(_) => "missing".to_string(),
+                None => "not_provided".to_string(),
+            },
+        },
+        CheckItem {
+            name: "openssl_available".to_string(),
+            status: if std::process::Command::new("openssl")
+                .arg("version")
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false)
+            {
+                "ok"
+            } else {
+                "missing"
+            }
+            .to_string(),
+        },
+    ];
+
+    let overall = if checks
+        .iter()
+        .all(|c| c.status == "ok" || c.status == "not_provided")
+    {
+        "ok"
+    } else {
+        "needs_attention"
+    }
+    .to_string();
+
+    RackDoctorReport { overall, checks }
 }
 
 fn parse_upstream_plugins(path: &PathBuf) -> Vec<serde_json::Value> {

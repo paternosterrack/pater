@@ -84,6 +84,7 @@ pater trust status
 pater release-check
 
 # rack maintainer pipeline (replaces old python scripts)
+pater rack doctor --rack-dir ../rack --sign-key /path/to/key.pem
 pater rack sync --rack-dir ../rack
 pater rack license-audit --rack-dir ../rack
 pater rack mark-unknown-external --rack-dir ../rack
