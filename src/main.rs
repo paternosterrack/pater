@@ -85,6 +85,7 @@ enum AdapterCommands {
         #[arg(long, value_enum, default_value_t = AdapterTarget::All)]
         target: AdapterTarget,
     },
+    Doctor,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, ValueEnum)]
@@ -259,6 +260,30 @@ fn main() -> anyhow::Result<()> {
                     }
                 }
             }
+            AdapterCommands::Doctor => {
+                let report = adapter_doctor(&state)?;
+                if cli.json {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&JsonOut {
+                            ok: true,
+                            data: report
+                        })?
+                    );
+                } else {
+                    println!("overall: {}", report.overall);
+                    println!("path_has_local_bin: {}", report.path_has_local_bin);
+                    for r in report.smoke {
+                        println!("{}\t{}", r.adapter, r.status);
+                    }
+                    for c in report.configs {
+                        println!("config:{}\t{}", c.name, c.status);
+                    }
+                    for w in report.wrappers {
+                        println!("wrapper:{}\t{}", w.name, w.status);
+                    }
+                }
+            }
         },
         Commands::Update {
             plugin,
@@ -400,6 +425,21 @@ struct SmokeReport {
     status: String,
     checked_plugins: usize,
     missing_plugins: Vec<String>,
+}
+
+#[derive(Serialize)]
+struct CheckItem {
+    name: String,
+    status: String,
+}
+
+#[derive(Serialize)]
+struct DoctorReport {
+    overall: String,
+    path_has_local_bin: bool,
+    smoke: Vec<SmokeReport>,
+    configs: Vec<CheckItem>,
+    wrappers: Vec<CheckItem>,
 }
 
 fn update_plugins(
@@ -698,6 +738,91 @@ fn adapter_smoke(state: &State, target: AdapterTarget) -> anyhow::Result<Vec<Smo
         });
     }
     Ok(out)
+}
+
+fn adapter_doctor(state: &State) -> anyhow::Result<DoctorReport> {
+    let home = std::env::var("HOME")?;
+    let smoke = adapter_smoke(state, AdapterTarget::All)?;
+
+    let configs = vec![
+        CheckItem {
+            name: "claude_settings".to_string(),
+            status: if PathBuf::from(&home).join(".claude/settings.json").exists() {
+                "ok".to_string()
+            } else {
+                "missing".to_string()
+            },
+        },
+        CheckItem {
+            name: "codex_config".to_string(),
+            status: if PathBuf::from(&home).join(".codex/config.toml").exists() {
+                "ok".to_string()
+            } else {
+                "missing".to_string()
+            },
+        },
+        CheckItem {
+            name: "openclaw_index".to_string(),
+            status: if PathBuf::from(&home)
+                .join(".openclaw/workspace/skills/.pater-index.json")
+                .exists()
+            {
+                "ok".to_string()
+            } else {
+                "missing".to_string()
+            },
+        },
+    ];
+
+    let wrappers = vec![
+        CheckItem {
+            name: "pater-claude".to_string(),
+            status: if PathBuf::from(&home)
+                .join(".local/bin/pater-claude")
+                .exists()
+            {
+                "ok".to_string()
+            } else {
+                "missing".to_string()
+            },
+        },
+        CheckItem {
+            name: "pater-codex".to_string(),
+            status: if PathBuf::from(&home).join(".local/bin/pater-codex").exists() {
+                "ok".to_string()
+            } else {
+                "missing".to_string()
+            },
+        },
+        CheckItem {
+            name: "pater-openclaw".to_string(),
+            status: if PathBuf::from(&home)
+                .join(".local/bin/pater-openclaw")
+                .exists()
+            {
+                "ok".to_string()
+            } else {
+                "missing".to_string()
+            },
+        },
+    ];
+
+    let path_has_local_bin = std::env::var("PATH")
+        .unwrap_or_default()
+        .split(':')
+        .any(|p| p == PathBuf::from(&home).join(".local/bin").to_string_lossy());
+
+    let all_ok = smoke.iter().all(|s| s.status == "ok")
+        && configs.iter().all(|c| c.status == "ok")
+        && wrappers.iter().all(|w| w.status == "ok");
+
+    Ok(DoctorReport {
+        overall: if all_ok { "ok" } else { "needs_attention" }.to_string(),
+        path_has_local_bin,
+        smoke,
+        configs,
+        wrappers,
+    })
 }
 
 fn write_activation_shim(target: &AdapterTarget, plugin_dirs: &[String]) -> anyhow::Result<()> {
