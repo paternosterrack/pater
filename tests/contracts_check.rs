@@ -103,7 +103,13 @@ fn contracts_check() {
     let pol = run_json(
         &home,
         &rack,
-        &["policy", "eval", "typescript-lsp@fixture-rack", "--agent", "all"],
+        &[
+            "policy",
+            "eval",
+            "typescript-lsp@fixture-rack",
+            "--agent",
+            "all",
+        ],
     );
     assert_eq!(pol["ok"], true);
     validate("policy-eval.schema.json", &pol["data"]);

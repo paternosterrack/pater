@@ -1100,10 +1100,12 @@ fn run(cli: Cli) -> anyhow::Result<()> {
                 .unwrap_or(false),
             };
             let doctor = adapter_doctor(&state)?;
-            let rack_license_audit = run_rack_license_audit();
+            let rack_license_audit = run_rack_license_audit(&cli.marketplace);
+            let rack_audit_ok =
+                rack_license_audit == "ok" || rack_license_audit == "not_applicable";
             let overall = if trust.default_marketplace_signature_ok
                 && doctor.overall == "ok"
-                && rack_license_audit == "ok"
+                && rack_audit_ok
             {
                 "ok"
             } else {
@@ -1118,8 +1120,8 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             if doctor.overall != "ok" {
                 recommendations.push("Run `pater adapter sync --target all` and `pater adapter doctor` until all adapter checks are ok.".to_string());
             }
-            if rack_license_audit != "ok" {
-                recommendations.push("Run `pater rack license-audit --rack-dir ../rack` and resolve unknown/proprietary plugins before release.".to_string());
+            if rack_license_audit == "failed" || rack_license_audit == "error" {
+                recommendations.push("Run `pater rack license-audit --rack-dir <rack-dir>` and resolve unknown/proprietary plugins before release.".to_string());
             }
             let report = ReleaseCheckReport {
                 overall,
@@ -1613,7 +1615,7 @@ fn enforce_policy_for_plugin(policy: &PolicyFile, p: &DiscoverItem) -> anyhow::R
             .general
             .allowed_sources
             .iter()
-            .any(|s| p.marketplace_source.starts_with(s))
+            .any(|s| source_matches_allowed(&p.marketplace_source, s))
     {
         anyhow::bail!("policy denied source: {}", p.marketplace_source);
     }
@@ -1655,6 +1657,58 @@ fn enforce_policy_for_plugin(policy: &PolicyFile, p: &DiscoverItem) -> anyhow::R
     }
 
     Ok(())
+}
+
+fn canonical_market_source_id(raw: &str) -> String {
+    let s = raw.trim();
+
+    // GitHub shorthand: owner/repo
+    if s.split('/').count() == 2 && !s.contains("://") && !s.starts_with('.') {
+        return format!("github:{}", s.to_ascii_lowercase());
+    }
+
+    // GitHub URLs and raw.githubusercontent.com URLs
+    if let Some(rest) = s.strip_prefix("https://github.com/") {
+        let parts: Vec<&str> = rest.split('/').collect();
+        if parts.len() >= 2 {
+            let owner = parts[0];
+            let repo = parts[1].trim_end_matches(".git");
+            if !owner.is_empty() && !repo.is_empty() {
+                return format!(
+                    "github:{}/{}",
+                    owner.to_ascii_lowercase(),
+                    repo.to_ascii_lowercase()
+                );
+            }
+        }
+    }
+    if let Some(rest) = s.strip_prefix("https://raw.githubusercontent.com/") {
+        let parts: Vec<&str> = rest.split('/').collect();
+        if parts.len() >= 2 {
+            let owner = parts[0];
+            let repo = parts[1];
+            if !owner.is_empty() && !repo.is_empty() {
+                return format!(
+                    "github:{}/{}",
+                    owner.to_ascii_lowercase(),
+                    repo.to_ascii_lowercase()
+                );
+            }
+        }
+    }
+
+    let p = PathBuf::from(s);
+    if p.exists() {
+        if let Ok(c) = p.canonicalize() {
+            return format!("path:{}", c.to_string_lossy());
+        }
+    }
+
+    s.trim_end_matches('/').to_ascii_lowercase()
+}
+
+fn source_matches_allowed(source: &str, allowed: &str) -> bool {
+    canonical_market_source_id(source) == canonical_market_source_id(allowed)
 }
 
 fn normalize_license_token(raw: &str) -> String {
@@ -2109,9 +2163,10 @@ fn classify_local_plugin_license(plugin_path: &std::path::Path) -> &'static str 
     "unknown"
 }
 
-fn rack_license_audit(rack_dir: &str) -> anyhow::Result<RackLicenseAuditSummary> {
-    let root = PathBuf::from(rack_dir);
-    let mp = root.join(".pater/marketplace.json");
+fn rack_license_audit_readonly(
+    rack_dir: &std::path::Path,
+) -> anyhow::Result<RackLicenseAuditSummary> {
+    let mp = rack_dir.join(".pater/marketplace.json");
     let raw = std::fs::read_to_string(&mp)?;
     let v: serde_json::Value = serde_json::from_str(&raw)?;
     let plugins = v
@@ -2123,8 +2178,44 @@ fn rack_license_audit(rack_dir: &str) -> anyhow::Result<RackLicenseAuditSummary>
     let mut permissive = 0usize;
     let mut copyleft = 0usize;
     let mut unknown = 0usize;
-    let mut detailed = Vec::new();
 
+    for p in plugins {
+        let source = p.get("source");
+        let mut cls = "unknown";
+        if let Some(s) = source.and_then(|x| x.as_str()) {
+            if s.starts_with("./") {
+                cls = classify_local_plugin_license(&rack_dir.join(s.trim_start_matches("./")));
+            }
+        }
+        match cls {
+            "permissive" => permissive += 1,
+            "copyleft" => copyleft += 1,
+            _ => unknown += 1,
+        }
+    }
+
+    Ok(RackLicenseAuditSummary {
+        permissive,
+        copyleft,
+        unknown_count: unknown,
+        total: permissive + copyleft + unknown,
+    })
+}
+
+fn rack_license_audit(rack_dir: &str) -> anyhow::Result<RackLicenseAuditSummary> {
+    let root = PathBuf::from(rack_dir);
+    let summary = rack_license_audit_readonly(&root)?;
+
+    let mp = root.join(".pater/marketplace.json");
+    let raw = std::fs::read_to_string(&mp)?;
+    let v: serde_json::Value = serde_json::from_str(&raw)?;
+    let plugins = v
+        .get("plugins")
+        .and_then(|x| x.as_array())
+        .cloned()
+        .unwrap_or_default();
+
+    let mut detailed = Vec::new();
     for p in plugins {
         let name = p.get("name").and_then(|x| x.as_str()).unwrap_or("");
         let source = p.get("source");
@@ -2133,11 +2224,6 @@ fn rack_license_audit(rack_dir: &str) -> anyhow::Result<RackLicenseAuditSummary>
             if s.starts_with("./") {
                 cls = classify_local_plugin_license(&root.join(s.trim_start_matches("./")));
             }
-        }
-        match cls {
-            "permissive" => permissive += 1,
-            "copyleft" => copyleft += 1,
-            _ => unknown += 1,
         }
         detailed.push(serde_json::json!({"name": name, "classification": if cls=="unknown" {"proprietary/unknown"} else {cls}}));
     }
@@ -2148,12 +2234,7 @@ fn rack_license_audit(rack_dir: &str) -> anyhow::Result<RackLicenseAuditSummary>
         serde_json::to_string_pretty(&report)?,
     )?;
 
-    Ok(RackLicenseAuditSummary {
-        permissive,
-        copyleft,
-        unknown_count: unknown,
-        total: permissive + copyleft + unknown,
-    })
+    Ok(summary)
 }
 
 fn rack_mark_unknown_external(rack_dir: &str) -> anyhow::Result<usize> {
@@ -2222,8 +2303,21 @@ fn rack_sign_marketplace(rack_dir: &str, sign_key: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn run_rack_license_audit() -> String {
-    match rack_license_audit("../rack") {
+fn run_rack_license_audit(marketplace_source: &str) -> String {
+    let path = PathBuf::from(marketplace_source);
+    if !path.exists() {
+        return "not_applicable".to_string();
+    }
+
+    let rack_dir = if path.is_dir() {
+        path
+    } else if let Some(parent) = path.parent() {
+        parent.to_path_buf()
+    } else {
+        PathBuf::from(".")
+    };
+
+    match rack_license_audit_readonly(&rack_dir) {
         Ok(r) if r.unknown_count == 0 => "ok".to_string(),
         Ok(_) => "failed".to_string(),
         Err(_) => "error".to_string(),
@@ -2705,4 +2799,37 @@ fn print_one<T: Serialize>(json: bool, data: T, row: impl Fn(&T) -> String) -> a
         println!("{}", row(&data));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod unit_tests {
+    use super::{canonical_market_source_id, source_matches_allowed};
+
+    #[test]
+    fn source_matching_normalizes_github_forms() {
+        assert!(source_matches_allowed(
+            "paternosterrack/rack",
+            "https://github.com/paternosterrack/rack.git"
+        ));
+        assert!(source_matches_allowed(
+            "paternosterrack/rack",
+            "https://raw.githubusercontent.com/paternosterrack/rack/main/.pater/marketplace.json"
+        ));
+    }
+
+    #[test]
+    fn source_matching_rejects_prefix_tricks() {
+        assert!(!source_matches_allowed(
+            "https://github.com/paternosterrack/rack-evil",
+            "https://github.com/paternosterrack/rack"
+        ));
+    }
+
+    #[test]
+    fn canonical_id_is_stable_for_github_shorthand() {
+        assert_eq!(
+            canonical_market_source_id("PaternosterRack/Rack"),
+            "github:paternosterrack/rack"
+        );
+    }
 }
