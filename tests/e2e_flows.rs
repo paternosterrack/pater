@@ -28,9 +28,9 @@ fn search_and_show_against_local_fixture_marketplace() {
     let search = env.run_json_market(&["search", "commit"]);
     assert_eq!(search["ok"], true);
     let results = search["data"].as_array().expect("search results array");
-    assert!(results.iter().any(|r| {
-        r["name"] == "commit-commands" && r["marketplace"] == "fixture-rack"
-    }));
+    assert!(results
+        .iter()
+        .any(|r| { r["name"] == "commit-commands" && r["marketplace"] == "fixture-rack" }));
 
     let show = env.run_json_market(&["show", "commit-commands@fixture-rack"]);
     assert_eq!(show["ok"], true);
