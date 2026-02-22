@@ -93,6 +93,32 @@ fn apply_and_adapter_smoke_for_codex_target() {
 }
 
 #[test]
+fn runtime_first_registry_and_bridge_flow() {
+    let env = TestEnv::new();
+
+    let install = env.run_json_market(&["install", "commit-commands@fixture-rack"]);
+    assert_eq!(install["ok"], true);
+
+    let status = env.run_json(&["runtime", "status"]);
+    assert_eq!(status["ok"], true);
+    assert_eq!(status["data"]["registry_exists"], true);
+    assert_eq!(status["data"]["plugins_count"], 1);
+    assert_eq!(status["data"]["skills_count"], 1);
+    assert_eq!(status["data"]["hooks_count"], 1);
+    assert_eq!(status["data"]["subagents_count"], 1);
+    assert_eq!(status["data"]["mcps_count"], 1);
+
+    let runtime_plugin = env
+        .home
+        .join(".local/share/pater/runtime/plugins/commit-commands");
+    assert!(runtime_plugin.exists());
+
+    // Runtime-first means adapter native plugin trees are not canonical and should not be copied.
+    assert!(!env.home.join(".codex/plugins/commit-commands").exists());
+    assert!(!env.home.join(".claude/plugins/commit-commands").exists());
+}
+
+#[test]
 fn policy_denies_install_for_blocked_permission() {
     let env = TestEnv::new();
 

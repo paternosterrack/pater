@@ -1,8 +1,12 @@
 use crate::cli::AdapterTarget;
 use crate::domain::models::{CheckItem, DoctorReport, SmokeReport, State};
 use crate::rack;
-use std::collections::HashSet;
-use std::path::PathBuf;
+use crate::services::storage::{
+    materialize_plugin, runtime_base_dir, runtime_bridges_dir, runtime_plugins_dir,
+    runtime_registry_path,
+};
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 
 fn check_exists(name: &str, path: PathBuf) -> CheckItem {
     CheckItem {
@@ -11,18 +15,22 @@ fn check_exists(name: &str, path: PathBuf) -> CheckItem {
     }
 }
 
-fn adapter_base(target: &AdapterTarget) -> anyhow::Result<PathBuf> {
-    let home = std::env::var("HOME")?;
-    let p = match target {
-        AdapterTarget::Claude => PathBuf::from(home).join(".claude/plugins"),
-        AdapterTarget::Codex => PathBuf::from(home).join(".codex/plugins"),
-        AdapterTarget::Openclaw => PathBuf::from(home).join(".openclaw/workspace/skills"),
-        AdapterTarget::All => PathBuf::from(home).join(".pater/adapters"),
-    };
-    Ok(p)
+fn adapter_shim_path(home: &str, target: &AdapterTarget) -> PathBuf {
+    match target {
+        AdapterTarget::Claude => PathBuf::from(home).join(".claude/pater.plugins.json"),
+        AdapterTarget::Codex => PathBuf::from(home).join(".codex/pater.plugins.json"),
+        AdapterTarget::Openclaw => {
+            PathBuf::from(home).join(".openclaw/workspace/skills/.pater-index.json")
+        }
+        AdapterTarget::All => PathBuf::new(),
+    }
 }
 
-fn copy_dir_all(src: &std::path::Path, dst: &std::path::Path) -> anyhow::Result<()> {
+fn bridge_file_path(target: &AdapterTarget) -> anyhow::Result<PathBuf> {
+    Ok(runtime_bridges_dir()?.join(format!("{:?}.json", target).to_ascii_lowercase()))
+}
+
+fn copy_dir_all(src: &Path, dst: &Path) -> anyhow::Result<()> {
     if dst.exists() {
         std::fs::remove_dir_all(dst)?;
     }
@@ -41,52 +49,232 @@ fn copy_dir_all(src: &std::path::Path, dst: &std::path::Path) -> anyhow::Result<
     Ok(())
 }
 
-fn sync_target(state: &State, target: AdapterTarget) -> anyhow::Result<()> {
-    let base = adapter_base(&target)?;
+fn ensure_runtime_materialized(
+    installed: &crate::domain::models::InstalledPlugin,
+) -> Option<PathBuf> {
+    let runtime_dir = runtime_plugins_dir().ok()?.join(&installed.name);
+    if runtime_dir.exists() {
+        return Some(runtime_dir);
+    }
+
+    let local_path = PathBuf::from(&installed.local_path);
+    if local_path.exists() && local_path.is_dir() && copy_dir_all(&local_path, &runtime_dir).is_ok()
+    {
+        return Some(runtime_dir);
+    }
+
+    if let Ok(src) = rack::resolve_plugin_path(&installed.marketplace_source, &installed.source) {
+        if let Ok(dst) = materialize_plugin(&installed.name, &src) {
+            return Some(dst);
+        }
+    }
+
+    None
+}
+
+fn load_manifest_mcps(runtime_dir: &Path) -> Vec<serde_json::Value> {
+    let manifest = runtime_dir.join(".claude-plugin").join("plugin.json");
+    if !manifest.exists() {
+        return Vec::new();
+    }
+
+    let Ok(raw) = std::fs::read_to_string(manifest) else {
+        return Vec::new();
+    };
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(&raw) else {
+        return Vec::new();
+    };
+
+    value
+        .get("mcps")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default()
+}
+
+fn build_runtime_registry(
+    state: &State,
+) -> anyhow::Result<(Vec<String>, serde_json::Value, PathBuf)> {
+    let base = runtime_base_dir()?;
     std::fs::create_dir_all(&base)?;
-    let mut installed_dirs = Vec::new();
-    let desired: HashSet<String> = state.installed.iter().map(|p| p.name.clone()).collect();
 
-    for p in &state.installed {
-        let mut src = PathBuf::from(&p.local_path);
-        if !src.exists() {
-            if let Ok(r) = rack::resolve_plugin_path(&p.marketplace_source, &p.source) {
-                src = r;
-            }
-        }
-        if !src.exists() {
+    let mut plugin_dirs = Vec::new();
+    let mut plugins = Vec::new();
+    let mut skills = Vec::new();
+    let mut hooks = Vec::new();
+    let mut subagents = Vec::new();
+    let mut mcps = Vec::new();
+    let mut markets_cache: HashMap<String, rack::Marketplace> = HashMap::new();
+
+    for installed in &state.installed {
+        let Some(runtime_dir) = ensure_runtime_materialized(installed) else {
             continue;
+        };
+
+        let runtime_path = runtime_dir.to_string_lossy().to_string();
+        plugin_dirs.push(runtime_path.clone());
+
+        let market = if let Some(cached) = markets_cache.get(&installed.marketplace_source) {
+            Some(cached.clone())
+        } else if let Ok(loaded) = rack::load_marketplace(&installed.marketplace_source) {
+            markets_cache.insert(installed.marketplace_source.clone(), loaded.clone());
+            Some(loaded)
+        } else {
+            None
+        };
+
+        let market_plugin = market
+            .as_ref()
+            .and_then(|m| m.plugins.iter().find(|p| p.name == installed.name));
+
+        let plugin_skills = market_plugin.map(|p| p.skills.clone()).unwrap_or_default();
+
+        let plugin_hooks = market_plugin.map(|p| p.hooks.clone()).unwrap_or_default();
+
+        let plugin_subagents = market_plugin
+            .map(|p| p.subagents.clone())
+            .unwrap_or_default();
+
+        let plugin_mcps = load_manifest_mcps(&runtime_dir);
+
+        plugins.push(serde_json::json!({
+            "name": installed.name,
+            "marketplace": installed.marketplace,
+            "marketplace_source": installed.marketplace_source,
+            "source": installed.source,
+            "runtime_path": runtime_path,
+            "permissions": installed.permissions,
+            "version": installed.version,
+            "scope": installed.scope,
+        }));
+
+        for skill in &plugin_skills {
+            skills.push(serde_json::json!({
+                "plugin": installed.name,
+                "name": skill,
+                "path": runtime_dir.join("skills").join(skill).to_string_lossy(),
+            }));
         }
-        let dst = base.join(&p.name);
-        copy_dir_all(&src, &dst)?;
-        installed_dirs.push(dst.to_string_lossy().to_string());
+
+        for hook in plugin_hooks {
+            hooks.push(serde_json::json!({
+                "plugin": installed.name,
+                "agent": hook.agent,
+                "event": hook.event,
+                "run": hook.run,
+            }));
+        }
+
+        for subagent in plugin_subagents {
+            subagents.push(serde_json::json!({
+                "plugin": installed.name,
+                "name": subagent.name,
+                "purpose": subagent.purpose,
+            }));
+        }
+
+        for mcp in plugin_mcps {
+            mcps.push(serde_json::json!({
+                "plugin": installed.name,
+                "config": mcp,
+            }));
+        }
     }
 
-    for entry in std::fs::read_dir(&base)? {
-        let entry = entry?;
-        if !entry.file_type()?.is_dir() {
-            continue;
+    plugin_dirs.sort();
+    plugins.sort_by(|a, b| {
+        let an = a.get("name").and_then(|x| x.as_str()).unwrap_or("");
+        let bn = b.get("name").and_then(|x| x.as_str()).unwrap_or("");
+        an.cmp(bn)
+    });
+
+    let registry = serde_json::json!({
+        "managedBy": "pater",
+        "schemaVersion": 1,
+        "runtime_base": base,
+        "plugins": plugins,
+        "skills": skills,
+        "hooks": hooks,
+        "subagents": subagents,
+        "mcps": mcps,
+    });
+
+    let registry_path = runtime_registry_path()?;
+    if let Some(parent) = registry_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(&registry_path, serde_json::to_string_pretty(&registry)?)?;
+
+    Ok((plugin_dirs, registry, registry_path))
+}
+
+fn write_bridge(
+    target: &AdapterTarget,
+    plugin_dirs: &[String],
+    registry_path: &Path,
+) -> anyhow::Result<()> {
+    let home = std::env::var("HOME")?;
+    let shim_path = adapter_shim_path(&home, target);
+
+    let bridge_data = serde_json::json!({
+        "managedBy": "pater",
+        "adapter": format!("{:?}", target).to_ascii_lowercase(),
+        "runtime_registry": registry_path,
+        "plugin_dirs": plugin_dirs,
+        "note": "Runtime-first bridge generated by pater. Agent config should read runtime paths.",
+    });
+
+    if !matches!(target, AdapterTarget::All) {
+        if let Some(parent) = shim_path.parent() {
+            std::fs::create_dir_all(parent)?;
         }
-        let name = entry.file_name().to_string_lossy().to_string();
-        let path = entry.path();
-        let managed = path.join(".pater-managed").exists();
-        if managed && !desired.contains(&name) {
-            std::fs::remove_dir_all(path)?;
-        }
+        std::fs::write(&shim_path, serde_json::to_string_pretty(&bridge_data)?)?;
     }
 
-    write_activation_shim(&target, &installed_dirs)?;
+    let bridge_path = bridge_file_path(target)?;
+    if let Some(parent) = bridge_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(bridge_path, serde_json::to_string_pretty(&bridge_data)?)?;
+
+    match target {
+        AdapterTarget::Claude => {
+            let root = PathBuf::from(&home).join(".claude");
+            patch_claude_config(&root, plugin_dirs)?;
+            write_wrapper(&home, "pater-claude", "claude", plugin_dirs)?;
+        }
+        AdapterTarget::Codex => {
+            let root = PathBuf::from(&home).join(".codex");
+            patch_codex_config(&root, plugin_dirs)?;
+            write_wrapper(&home, "pater-codex", "codex", plugin_dirs)?;
+        }
+        AdapterTarget::Openclaw => {
+            write_wrapper(&home, "pater-openclaw", "openclaw", plugin_dirs)?;
+        }
+        AdapterTarget::All => {}
+    }
+
     Ok(())
 }
 
+fn sync_target(
+    target: AdapterTarget,
+    plugin_dirs: &[String],
+    registry_path: &Path,
+) -> anyhow::Result<()> {
+    write_bridge(&target, plugin_dirs, registry_path)
+}
+
 pub fn sync_installed(state: &State, target: AdapterTarget) -> anyhow::Result<()> {
+    let (plugin_dirs, _registry, registry_path) = build_runtime_registry(state)?;
+
     match target {
         AdapterTarget::All => {
-            sync_target(state, AdapterTarget::Claude)?;
-            sync_target(state, AdapterTarget::Codex)?;
-            sync_target(state, AdapterTarget::Openclaw)?;
+            sync_target(AdapterTarget::Claude, &plugin_dirs, &registry_path)?;
+            sync_target(AdapterTarget::Codex, &plugin_dirs, &registry_path)?;
+            sync_target(AdapterTarget::Openclaw, &plugin_dirs, &registry_path)?;
         }
-        t => sync_target(state, t)?,
+        t => sync_target(t, &plugin_dirs, &registry_path)?,
     }
     Ok(())
 }
@@ -103,36 +291,32 @@ pub fn adapter_smoke(state: &State, target: AdapterTarget) -> anyhow::Result<Vec
 
     let mut out = Vec::new();
     let home = std::env::var("HOME").ok();
+    let runtime_plugins = runtime_plugins_dir()?;
+
     for t in targets {
-        let base = adapter_base(&t)?;
         let mut missing = Vec::new();
         for p in &state.installed {
-            if !base.join(&p.name).exists() {
+            if !runtime_plugins.join(&p.name).exists() {
                 missing.push(p.name.clone());
             }
         }
 
         let shim_ok = if let Some(home) = &home {
-            match t {
-                AdapterTarget::Claude => PathBuf::from(home).join(".claude/pater.plugins.json"),
-                AdapterTarget::Codex => PathBuf::from(home).join(".codex/pater.plugins.json"),
-                AdapterTarget::Openclaw => {
-                    PathBuf::from(home).join(".openclaw/workspace/skills/.pater-index.json")
-                }
-                AdapterTarget::All => PathBuf::new(),
-            }
-            .exists()
-                || matches!(t, AdapterTarget::All)
+            adapter_shim_path(home, &t).exists()
         } else {
             false
         };
 
-        let status = if missing.is_empty() && shim_ok {
+        let bridge_ok = bridge_file_path(&t).map(|p| p.exists()).unwrap_or(false);
+
+        let status = if missing.is_empty() && shim_ok && bridge_ok {
             "ok".to_string()
         } else if !shim_ok {
             "missing_shim".to_string()
+        } else if !bridge_ok {
+            "missing_bridge".to_string()
         } else {
-            "missing_plugins".to_string()
+            "missing_runtime_plugins".to_string()
         };
 
         out.push(SmokeReport {
@@ -162,6 +346,7 @@ pub fn adapter_doctor(state: &State) -> anyhow::Result<DoctorReport> {
             "openclaw_index",
             PathBuf::from(&home).join(".openclaw/workspace/skills/.pater-index.json"),
         ),
+        check_exists("runtime_registry", runtime_registry_path()?),
     ];
 
     let wrappers = vec![
@@ -197,65 +382,8 @@ pub fn adapter_doctor(state: &State) -> anyhow::Result<DoctorReport> {
     })
 }
 
-fn write_activation_shim(target: &AdapterTarget, plugin_dirs: &[String]) -> anyhow::Result<()> {
-    let home = std::env::var("HOME")?;
-    match target {
-        AdapterTarget::Claude => {
-            let root = PathBuf::from(&home).join(".claude");
-            std::fs::create_dir_all(&root)?;
-            let data = serde_json::json!({
-                "managedBy": "pater",
-                "adapter": "claude",
-                "plugin_dirs": plugin_dirs,
-                "note": "Generated by pater. Load these plugin dirs in Claude Code startup config."
-            });
-            std::fs::write(
-                root.join("pater.plugins.json"),
-                serde_json::to_string_pretty(&data)?,
-            )?;
-            patch_claude_config(&root, plugin_dirs)?;
-            write_wrapper(&home, "pater-claude", "claude", plugin_dirs)?;
-        }
-        AdapterTarget::Codex => {
-            let root = PathBuf::from(&home).join(".codex");
-            std::fs::create_dir_all(&root)?;
-            let data = serde_json::json!({
-                "managedBy": "pater",
-                "adapter": "codex",
-                "plugin_dirs": plugin_dirs,
-                "note": "Generated by pater. Use these plugin dirs in Codex startup config."
-            });
-            std::fs::write(
-                root.join("pater.plugins.json"),
-                serde_json::to_string_pretty(&data)?,
-            )?;
-            patch_codex_config(&root, plugin_dirs)?;
-            write_wrapper(&home, "pater-codex", "codex", plugin_dirs)?;
-        }
-        AdapterTarget::Openclaw => {
-            let root = PathBuf::from(&home)
-                .join(".openclaw")
-                .join("workspace")
-                .join("skills");
-            std::fs::create_dir_all(&root)?;
-            let data = serde_json::json!({
-                "managedBy": "pater",
-                "adapter": "openclaw",
-                "plugin_dirs": plugin_dirs,
-                "note": "Generated by pater. Skills are materialized under this directory."
-            });
-            std::fs::write(
-                root.join(".pater-index.json"),
-                serde_json::to_string_pretty(&data)?,
-            )?;
-            write_wrapper(&home, "pater-openclaw", "openclaw", plugin_dirs)?;
-        }
-        AdapterTarget::All => {}
-    }
-    Ok(())
-}
-
 fn patch_claude_config(root: &std::path::Path, plugin_dirs: &[String]) -> anyhow::Result<()> {
+    std::fs::create_dir_all(root)?;
     let cfg = root.join("settings.json");
     let mut v = if cfg.exists() {
         serde_json::from_str::<serde_json::Value>(&std::fs::read_to_string(&cfg)?)
@@ -269,6 +397,7 @@ fn patch_claude_config(root: &std::path::Path, plugin_dirs: &[String]) -> anyhow
 }
 
 fn patch_codex_config(root: &std::path::Path, plugin_dirs: &[String]) -> anyhow::Result<()> {
+    std::fs::create_dir_all(root)?;
     let cfg = root.join("config.toml");
     let mut content = if cfg.exists() {
         std::fs::read_to_string(&cfg)?

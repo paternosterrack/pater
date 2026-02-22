@@ -44,17 +44,29 @@ pub fn upsert_installed(state: &mut State, entry: InstalledPlugin) {
     }
 }
 
-fn managed_store_base() -> anyhow::Result<PathBuf> {
+pub fn runtime_base_dir() -> anyhow::Result<PathBuf> {
     let home = std::env::var("HOME")?;
     Ok(PathBuf::from(home)
         .join(".local")
         .join("share")
         .join("pater")
-        .join("plugins"))
+        .join("runtime"))
+}
+
+pub fn runtime_plugins_dir() -> anyhow::Result<PathBuf> {
+    Ok(runtime_base_dir()?.join("plugins"))
+}
+
+pub fn runtime_registry_path() -> anyhow::Result<PathBuf> {
+    Ok(runtime_base_dir()?.join("registry.json"))
+}
+
+pub fn runtime_bridges_dir() -> anyhow::Result<PathBuf> {
+    Ok(runtime_base_dir()?.join("bridges"))
 }
 
 pub fn materialize_plugin(name: &str, source_path: &std::path::Path) -> anyhow::Result<PathBuf> {
-    let base = managed_store_base()?;
+    let base = runtime_plugins_dir()?;
     std::fs::create_dir_all(&base)?;
     let dst = base.join(name);
     copy_dir_all(source_path, &dst)?;

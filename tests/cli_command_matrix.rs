@@ -35,6 +35,7 @@ fn every_cli_command_has_help_path() {
     run_help(&home, &["check"]);
     run_help(&home, &["policy"]);
     run_help(&home, &["adapter"]);
+    run_help(&home, &["runtime"]);
 
     // grouped subcommands
     run_help(&home, &["hook", "list"]);
@@ -47,6 +48,9 @@ fn every_cli_command_has_help_path() {
     run_help(&home, &["adapter", "sync"]);
     run_help(&home, &["adapter", "smoke"]);
     run_help(&home, &["adapter", "doctor"]);
+    run_help(&home, &["runtime", "path"]);
+    run_help(&home, &["runtime", "status"]);
+    run_help(&home, &["runtime", "sync"]);
 
     run_help(&home, &["trust"]);
     run_help(&home, &["trust", "init"]);

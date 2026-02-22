@@ -2,8 +2,9 @@
 
 ```bash
 pater trust init
-pater --marketplace ../rack search commit
-pater --marketplace ../rack install commit-commands@paternoster-rack
+pater search commit
+pater install commit-commands@paternoster-rack
+pater runtime status
 pater adapter doctor
 pater check
 ```

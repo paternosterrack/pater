@@ -1,6 +1,6 @@
 use crate::cli::{
     AdapterCommands, AdapterTarget, Cli, Commands, HookCommands, InstallScope, PolicyCommands,
-    RemoteCommands, DEFAULT_MARKETPLACE_SOURCE,
+    RemoteCommands, RuntimeCommands, DEFAULT_MARKETPLACE_SOURCE,
 };
 use crate::domain::models::{
     CapabilitiesReport, DiscoverItem, InstalledPlugin, JsonOut, MarketRef, PlanReport, PolicyFile,
@@ -15,9 +15,11 @@ use crate::services::marketplace::{
 use crate::services::output::{print_one, print_out};
 use crate::services::release_check::build_release_check_report;
 use crate::services::storage::{
-    audit, materialize_plugin, save_lockfile, save_state, upsert_installed,
+    audit, materialize_plugin, runtime_base_dir, runtime_bridges_dir, runtime_registry_path,
+    save_lockfile, save_state, upsert_installed,
 };
 use crate::services::trust::{list_pubkeys, verify_marketplace_signature};
+use std::path::Path;
 
 fn install_entry(
     state: &mut State,
@@ -48,6 +50,52 @@ pub fn handle_runtime_commands(
     default_market: Option<&rack::Marketplace>,
 ) -> anyhow::Result<()> {
     match &cli.command {
+        Commands::Runtime { command } => match command {
+            RuntimeCommands::Path => {
+                let data = serde_json::json!({
+                    "base": runtime_base_dir()?,
+                    "plugins": runtime_base_dir()?.join("plugins"),
+                    "registry": runtime_registry_path()?,
+                    "bridges": runtime_bridges_dir()?,
+                });
+                print_one(cli.json, data, |d| {
+                    let registry = d["registry"].as_str().unwrap_or("");
+                    format!("runtime registry: {}", registry)
+                })?;
+            }
+            RuntimeCommands::Status => {
+                let registry_path = runtime_registry_path()?;
+                let report = runtime_status_report(state, &registry_path)?;
+                print_one(cli.json, report, |r| {
+                    let plugin_count = r["plugins_count"].as_u64().unwrap_or(0);
+                    let exists = r["registry_exists"].as_bool().unwrap_or(false);
+                    format!(
+                        "runtime status: registry_exists={} plugins={}",
+                        exists, plugin_count
+                    )
+                })?;
+            }
+            RuntimeCommands::Sync { target } => {
+                sync_installed(state, target.clone())?;
+                let registry_path = runtime_registry_path()?;
+                let report = runtime_status_report(state, &registry_path)?;
+                if cli.json {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&JsonOut {
+                            ok: true,
+                            data: report
+                        })?
+                    );
+                } else {
+                    println!(
+                        "runtime sync completed for target={}",
+                        format!("{:?}", target).to_ascii_lowercase()
+                    );
+                    println!("registry: {}", registry_path.to_string_lossy());
+                }
+            }
+        },
         Commands::Search { query } => {
             let items = discover_across(all_markets, query.as_deref(), policy)?;
             print_out(cli.json, &items, |p| {
@@ -439,4 +487,56 @@ pub fn handle_runtime_commands(
     }
 
     Ok(())
+}
+
+fn runtime_status_report(state: &State, registry_path: &Path) -> anyhow::Result<serde_json::Value> {
+    let mut plugins_count = 0usize;
+    let mut skills_count = 0usize;
+    let mut hooks_count = 0usize;
+    let mut subagents_count = 0usize;
+    let mut mcps_count = 0usize;
+    let registry_exists = registry_path.exists();
+
+    if registry_exists {
+        let raw = std::fs::read_to_string(registry_path)?;
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&raw) {
+            plugins_count = v
+                .get("plugins")
+                .and_then(|x| x.as_array())
+                .map(|x| x.len())
+                .unwrap_or(0);
+            skills_count = v
+                .get("skills")
+                .and_then(|x| x.as_array())
+                .map(|x| x.len())
+                .unwrap_or(0);
+            hooks_count = v
+                .get("hooks")
+                .and_then(|x| x.as_array())
+                .map(|x| x.len())
+                .unwrap_or(0);
+            subagents_count = v
+                .get("subagents")
+                .and_then(|x| x.as_array())
+                .map(|x| x.len())
+                .unwrap_or(0);
+            mcps_count = v
+                .get("mcps")
+                .and_then(|x| x.as_array())
+                .map(|x| x.len())
+                .unwrap_or(0);
+        }
+    }
+
+    Ok(serde_json::json!({
+        "runtime_base": runtime_base_dir()?,
+        "registry": registry_path,
+        "registry_exists": registry_exists,
+        "installed_count": state.installed.len(),
+        "plugins_count": plugins_count,
+        "skills_count": skills_count,
+        "hooks_count": hooks_count,
+        "subagents_count": subagents_count,
+        "mcps_count": mcps_count,
+    }))
 }

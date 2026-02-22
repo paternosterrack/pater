@@ -10,7 +10,12 @@ All notable changes to this project are tracked here.
 - Shared integration test helpers (`tests/common/mod.rs`).
 - CI rustdoc gate (`RUSTDOCFLAGS="-D warnings" cargo doc --no-deps`).
 - CI llvm-cov summary step (`cargo llvm-cov --all-features --all-targets --workspace --summary-only`).
+- Runtime command group: `pater runtime path|status|sync`.
+- Runtime-first E2E coverage for registry + bridge generation.
 
 ### Changed
 - Refactored architecture to keep `main.rs` bootstrap-focused and move runtime logic into layered modules.
 - Internal docs moved to rustdoc-first model; module guidance now lives in `//!` comments.
+- Runtime directory is now canonical source of truth: `~/.local/share/pater/runtime`.
+- Adapter sync behavior now generates bridge/config outputs that point to runtime paths instead of per-adapter plugin tree copies.
+- Docs now separate user onboarding from dev/maintainer local `../rack` workflows.

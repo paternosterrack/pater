@@ -53,6 +53,10 @@ pub enum Commands {
         #[command(subcommand)]
         command: AdapterCommands,
     },
+    Runtime {
+        #[command(subcommand)]
+        command: RuntimeCommands,
+    },
     Update {
         plugin: Option<String>,
         #[arg(long, default_value_t = false)]
@@ -307,6 +311,16 @@ pub enum AdapterCommands {
         target: AdapterTarget,
     },
     Doctor,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum RuntimeCommands {
+    Path,
+    Status,
+    Sync {
+        #[arg(long, value_enum, default_value_t = AdapterTarget::All)]
+        target: AdapterTarget,
+    },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, ValueEnum)]

@@ -30,6 +30,8 @@ pub struct InstalledPlugin {
     #[serde(default)]
     pub marketplace_source: String,
     pub source: String,
+    /// Runtime materialization path managed by pater.
+    /// Kept as `local_path` for backward-compatible state/lock schema.
     #[serde(default)]
     pub local_path: String,
     pub version: Option<String>,

@@ -33,6 +33,7 @@ cp examples/policy-safe-default.toml ~/.config/pater/policy.toml
 ```bash
 pater search typescript
 pater install typescript-lsp@paternoster-rack
+pater runtime status
 pater adapter doctor
 pater check
 ```
@@ -41,7 +42,23 @@ pater check
 
 Restart Claude/Codex/OpenClaw to load newly synced plugins.
 
-## For Developers
+## Runtime and Agent Integration
+
+Canonical runtime directory:
+
+- `~/.local/share/pater/runtime/plugins`
+- `~/.local/share/pater/runtime/registry.json`
+- `~/.local/share/pater/runtime/bridges/*.json`
+
+Bridge/config outputs consumed by agent CLIs:
+
+- Claude: `~/.claude/pater.plugins.json`
+- Codex: `~/.codex/pater.plugins.json`
+- OpenClaw: `~/.openclaw/workspace/skills/.pater-index.json`
+
+`pater` keeps compatibility wrappers in `~/.local/bin` (`pater-claude`, `pater-codex`, `pater-openclaw`).
+
+## For Developers and Maintainers
 
 `../rack` is **dev-only local path usage** when `pater` and `rack` are cloned side-by-side.
 
@@ -100,6 +117,11 @@ pater hook list [--agent codex]
 pater adapter sync --target all|claude|codex|openclaw
 pater adapter smoke --target all|claude|codex|openclaw
 pater adapter doctor
+
+# runtime
+pater runtime path
+pater runtime status
+pater runtime sync --target all|claude|codex|openclaw
 
 # trust
 pater trust init

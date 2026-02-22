@@ -77,6 +77,7 @@ fn make_fixture_rack(base: &Path) -> PathBuf {
 
     fs::create_dir_all(rack.join(".pater")).expect("create .pater");
     fs::create_dir_all(commit.join(".claude-plugin")).expect("create plugin manifest dir");
+    fs::create_dir_all(commit.join("skills/commit-guidelines")).expect("create skill dir");
 
     fs::write(
         commit.join("LICENSE"),
@@ -88,11 +89,19 @@ fn make_fixture_rack(base: &Path) -> PathBuf {
         serde_json::json!({
             "name": "commit-commands",
             "version": "1.0.0",
-            "license": "MIT"
+            "license": "MIT",
+            "mcps": [
+                {"name": "github", "command": "mcp-github"}
+            ]
         })
         .to_string(),
     )
     .expect("write plugin manifest");
+    fs::write(
+        commit.join("skills/commit-guidelines/SKILL.md"),
+        "# Commit Guidelines\n",
+    )
+    .expect("write skill file");
 
     let marketplace = serde_json::json!({
         "name": "fixture-rack",
@@ -104,6 +113,7 @@ fn make_fixture_rack(base: &Path) -> PathBuf {
                 "description": "Conventional commit helpers",
                 "version": "1.0.0",
                 "permissions": ["filesystem.read"],
+                "skills": ["commit-guidelines"],
                 "hooks": [{"agent": "codex", "event": "on-demand", "run": "echo ok"}],
                 "subagents": [{"name": "commit-helper", "purpose": "assist commit work"}]
             }

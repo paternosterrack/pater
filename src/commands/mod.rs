@@ -4,7 +4,7 @@
 //!
 //! ## Files
 //! - `admin.rs` — trust/rack/author command trees.
-//! - `runtime.rs` — search/install/apply/update/remove/list/etc.
+//! - `runtime.rs` — search/install/apply/update/remove/list/runtime/etc.
 //!
 //! ## Principles
 //! - Parse/match CLI inputs here.
@@ -17,6 +17,7 @@
 //! pater show commit-commands@paternoster-rack
 //! pater install commit-commands@paternoster-rack
 //! pater apply commit-commands@paternoster-rack --target-adapter codex
+//! pater runtime status
 //! pater check
 //! ```
 

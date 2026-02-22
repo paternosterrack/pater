@@ -6,6 +6,7 @@ Common command path:
 pater search <query>
 pater show <plugin@market>
 pater install <plugin@market>
+pater runtime status
 pater list
 pater update [plugin]
 pater remove <plugin>

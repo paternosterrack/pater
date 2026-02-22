@@ -189,6 +189,12 @@ fn cli_core_commands_and_options_success_paths() {
     assert!(out.contains("adapter"));
     let out = run(&home, &["--json", "adapter", "doctor"]);
     assert!(out.contains("overall"));
+    let out = run(&home, &["runtime", "path"]);
+    assert!(out.contains("runtime registry"));
+    let out = run(&home, &["--json", "runtime", "status"]);
+    assert!(out.contains("registry_exists"));
+    let out = run(&home, &["runtime", "sync", "--target", "all"]);
+    assert!(out.contains("runtime sync completed"));
 
     // release check command
     let out = run(&home, &["--marketplace", "../rack", "--json", "check"]);
