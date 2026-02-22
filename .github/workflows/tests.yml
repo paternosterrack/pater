@@ -16,3 +16,5 @@ jobs:
         run: cargo clippy --all-targets --all-features -- -D warnings
       - name: test
         run: cargo test --all
+      - name: rustdoc
+        run: RUSTDOCFLAGS="-D warnings" cargo doc --no-deps
