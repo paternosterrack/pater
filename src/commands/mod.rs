@@ -1,3 +1,5 @@
+//! Command handler layer: CLI matching/orchestration + output wiring.
+
 pub mod admin;
 pub mod runtime;
 

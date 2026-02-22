@@ -124,6 +124,20 @@ pater rack prepare-release --rack-dir ../rack --sign-key /path/to/key.pem
 Policy file: `~/.config/pater/policy.toml`  
 Starter template: `examples/policy-safe-default.toml`
 
+## Architecture (for contributors)
+
+Current high-level layout:
+- `src/main.rs` — bootstrap/wiring/error rendering (kept intentionally small)
+- `src/commands/*` — CLI command handlers/orchestration
+- `src/services/*` — business logic + side-effect helpers
+- `src/domain/*` — shared models/constants
+- `src/rack.rs` — marketplace loading/discovery primitives
+
+If you're changing behavior, prefer:
+1. add/adjust logic in `services/*`,
+2. keep `commands/*` thin,
+3. update `domain/models.rs` only for explicit schema/type changes.
+
 ## Machine contracts
 
 Stable JSON contracts for agent integrations:

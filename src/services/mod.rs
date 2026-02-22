@@ -1,3 +1,5 @@
+//! Service layer containing business logic and side-effect helpers.
+
 pub mod adapters;
 pub mod authoring;
 pub mod marketplace;
