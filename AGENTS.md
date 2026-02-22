@@ -12,12 +12,13 @@ This repo (`pater`) is the CLI/runtime interface for `rack` marketplaces.
    - `cargo fmt --all`
    - `cargo clippy --all-targets --all-features -- -D warnings`
    - `cargo test --all`
+   - `cargo llvm-cov --all-features --all-targets --workspace --summary-only`
 2. Keep command UX aligned with marketplace flow:
    - marketplace add/list/update
    - discover/show/install/remove/installed
    - validate/hooks list
 3. Maintain machine-friendly `--json` outputs for automation.
-4. When adding or changing a CLI command/option, add/update tests in `tests/cli.rs` in the same change.
+4. When adding or changing a CLI command/option, add/update integration tests in the same change (`tests/cli.rs` and command-surface check in `tests/cli_command_matrix.rs`).
 5. CI tests must pass on every PR/push (`.github/workflows/tests.yml`).
 
 ## Rack integration contract (mandatory)
