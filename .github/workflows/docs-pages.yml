@@ -32,6 +32,13 @@ jobs:
           mkdir -p site/api
           cp -r docs/book/* site/
           cp -r target/doc/* site/api/
+          cat > site/api/index.html <<'HTML'
+          <!doctype html>
+          <meta charset="utf-8" />
+          <meta http-equiv="refresh" content="0; url=./pater/" />
+          <title>Redirecting to pater rustdoc…</title>
+          <a href="./pater/">Open pater rustdoc</a>
+          HTML
       - name: Upload pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
