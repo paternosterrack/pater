@@ -38,9 +38,22 @@ Any CLI change that affects plugin resolution/install must be validated against 
 
 1. Rustdoc is the source of truth for internal docs.
    - Keep module-level `//!` docs in sync with code behavior.
-   - Root `README.md` may remain for external overview, but internal architecture notes should live in rustdoc comments.
+   - Root `README.md` remains public overview only.
 2. On every behavior-changing PR/push, run doc checks:
    - `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps`
 3. If you change command flow, service boundaries, or domain models, update docs in the same change.
    - No code-only architecture refactors without corresponding doc updates.
 4. CI doc checks must pass on every PR/push.
+
+### Doc ownership by layer
+
+- `src/commands/*` docs own: CLI flow, orchestration contracts, command semantics.
+- `src/services/*` docs own: behavior, side effects, invariants, failure modes.
+- `src/domain/*` docs own: JSON/data schema guarantees and compatibility notes.
+
+### Doc touchpoints checklist (required in behavior-changing PRs)
+
+- Command behavior changed? Update `src/commands/*` rustdoc.
+- Service logic/side effects changed? Update `src/services/*` rustdoc.
+- JSON shape or shared model changed? Update `src/domain/models.rs` rustdoc + `docs/contracts/*` when relevant.
+- Add a short entry to `CHANGELOG.md` under `Unreleased`.

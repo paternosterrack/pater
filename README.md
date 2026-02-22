@@ -143,3 +143,7 @@ If you're changing behavior, prefer:
 Stable JSON contracts for agent integrations:
 - `docs/contracts/README.md`
 - `docs/contracts/*.schema.json`
+
+## Changelog
+
+- `CHANGELOG.md`

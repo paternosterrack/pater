@@ -10,6 +10,15 @@
 //! - Parse/match CLI inputs here.
 //! - Delegate business logic to `services/*`.
 //! - Keep behavior and output schema stable.
+//!
+//! ## Common flows (CLI examples)
+//! ```text
+//! pater search typescript
+//! pater show commit-commands@paternoster-rack
+//! pater install commit-commands@paternoster-rack
+//! pater apply commit-commands@paternoster-rack --target-adapter codex
+//! pater check
+//! ```
 
 pub mod admin;
 pub mod runtime;

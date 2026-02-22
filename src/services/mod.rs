@@ -15,6 +15,11 @@
 //! - Prefer pure helpers where possible.
 //! - Side effects should be explicit and localized.
 //! - Keep command handlers thin; delegate to services.
+//!
+//! ## Key invariants
+//! - Policy checks must execute before install/apply/ensure.
+//! - `check` path must stay read-only for rack license audit.
+//! - Trust verification gates marketplace loading when policy requires signatures.
 
 pub mod adapters;
 pub mod authoring;
