@@ -1,0 +1,21 @@
+# Summary
+
+[Introduction](index.md)
+
+* [Getting Started](getting-started/index.md)
+  * [Installation](getting-started/installation.md)
+  * [First Workflow](getting-started/first-workflow.md)
+* [pater Guide](guide/index.md)
+  * [Architecture](guide/architecture.md)
+  * [Testing Strategy](guide/testing.md)
+  * [Docs Maintenance](guide/docs-maintenance.md)
+* [pater Reference](reference/index.md)
+  * [Policy and Trust](reference/policy-and-trust.md)
+  * [Adapter Behavior](reference/adapters.md)
+  * [JSON Contracts](reference/json-contracts.md)
+* [pater Commands](commands/index.md)
+  * [Lifecycle Commands](commands/lifecycle.md)
+  * [Admin Commands](commands/admin.md)
+* [Operations](operations/index.md)
+  * [CI Quality Gates](operations/ci-quality-gates.md)
+  * [Publishing Docs](operations/publishing-docs.md)

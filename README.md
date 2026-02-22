@@ -147,3 +147,15 @@ Stable JSON contracts for agent integrations:
 ## Changelog
 
 - `CHANGELOG.md`
+
+## Documentation
+
+Cargo-style handbook (mdBook source):
+- `docs/book.toml`
+- `docs/src/SUMMARY.md`
+
+Local build:
+```bash
+mdbook build docs
+cargo doc --no-deps
+```

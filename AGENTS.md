@@ -44,6 +44,7 @@ Any CLI change that affects plugin resolution/install must be validated against 
 3. If you change command flow, service boundaries, or domain models, update docs in the same change.
    - No code-only architecture refactors without corresponding doc updates.
 4. CI doc checks must pass on every PR/push.
+5. Keep mdBook (`docs/src/*`) and rustdoc (`//!` in `src/*`) aligned on behavior and terminology.
 
 ### Doc ownership by layer
 
