@@ -90,7 +90,7 @@ pub fn rack_doctor(rack_dir: &str, sign_key: Option<&str>) -> RackDoctorReport {
     RackDoctorReport { overall, checks }
 }
 
-fn parse_upstream_plugins(path: &PathBuf) -> Vec<serde_json::Value> {
+fn parse_upstream_plugins(path: &std::path::Path) -> Vec<serde_json::Value> {
     if !path.exists() {
         return vec![];
     }
@@ -169,6 +169,18 @@ fn classify_local_plugin_license(plugin_path: &std::path::Path) -> &'static str 
     "unknown"
 }
 
+fn classify_marketplace_plugin_source(
+    root: &std::path::Path,
+    source: Option<&str>,
+) -> &'static str {
+    if let Some(s) = source {
+        if s.starts_with("./") {
+            return classify_local_plugin_license(&root.join(s.trim_start_matches("./")));
+        }
+    }
+    "unknown"
+}
+
 pub fn rack_license_audit_readonly(
     rack_dir: &std::path::Path,
 ) -> anyhow::Result<RackLicenseAuditSummary> {
@@ -186,13 +198,8 @@ pub fn rack_license_audit_readonly(
     let mut unknown = 0usize;
 
     for p in plugins {
-        let source = p.get("source");
-        let mut cls = "unknown";
-        if let Some(s) = source.and_then(|x| x.as_str()) {
-            if s.starts_with("./") {
-                cls = classify_local_plugin_license(&rack_dir.join(s.trim_start_matches("./")));
-            }
-        }
+        let cls =
+            classify_marketplace_plugin_source(rack_dir, p.get("source").and_then(|x| x.as_str()));
         match cls {
             "permissive" => permissive += 1,
             "copyleft" => copyleft += 1,
@@ -224,13 +231,8 @@ pub fn rack_license_audit(rack_dir: &str) -> anyhow::Result<RackLicenseAuditSumm
     let mut detailed = Vec::new();
     for p in plugins {
         let name = p.get("name").and_then(|x| x.as_str()).unwrap_or("");
-        let source = p.get("source");
-        let mut cls = "unknown";
-        if let Some(s) = source.and_then(|x| x.as_str()) {
-            if s.starts_with("./") {
-                cls = classify_local_plugin_license(&root.join(s.trim_start_matches("./")));
-            }
-        }
+        let cls =
+            classify_marketplace_plugin_source(&root, p.get("source").and_then(|x| x.as_str()));
         detailed.push(serde_json::json!({"name": name, "classification": if cls=="unknown" {"proprietary/unknown"} else {cls}}));
     }
 

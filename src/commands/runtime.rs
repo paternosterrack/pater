@@ -3,8 +3,8 @@ use crate::cli::{
     RemoteCommands, DEFAULT_MARKETPLACE_SOURCE,
 };
 use crate::domain::models::{
-    CapabilitiesReport, InstalledPlugin, JsonOut, MarketRef, PlanReport, PolicyFile, State,
-    TrustStatus,
+    CapabilitiesReport, DiscoverItem, InstalledPlugin, JsonOut, MarketRef, PlanReport, PolicyFile,
+    State, TrustStatus,
 };
 use crate::rack;
 use crate::services::adapters::{adapter_doctor, adapter_smoke, sync_installed};
@@ -18,6 +18,27 @@ use crate::services::storage::{
     audit, materialize_plugin, save_lockfile, save_state, upsert_installed,
 };
 use crate::services::trust::{list_pubkeys, verify_marketplace_signature};
+
+fn install_entry(
+    state: &mut State,
+    plugin: &DiscoverItem,
+    scope: InstallScope,
+) -> anyhow::Result<InstalledPlugin> {
+    let source_path = rack::resolve_plugin_path(&plugin.marketplace_source, &plugin.source)?;
+    let local_path = materialize_plugin(&plugin.name, &source_path)?;
+    let entry = InstalledPlugin {
+        name: plugin.name.clone(),
+        marketplace: plugin.marketplace.clone(),
+        marketplace_source: plugin.marketplace_source.clone(),
+        source: plugin.source.clone(),
+        local_path: local_path.to_string_lossy().to_string(),
+        version: plugin.version.clone(),
+        permissions: plugin.permissions.clone(),
+        scope,
+    };
+    upsert_installed(state, entry.clone());
+    Ok(entry)
+}
 
 pub fn handle_runtime_commands(
     cli: &Cli,
@@ -88,19 +109,7 @@ pub fn handle_runtime_commands(
             let (name, market) = parse_target(target);
             let p = show_plugin(all_markets, &name, market.as_deref(), policy)?;
             enforce_policy_for_plugin(policy, &p)?;
-            let source_path = rack::resolve_plugin_path(&p.marketplace_source, &p.source)?;
-            let local_path = materialize_plugin(&p.name, &source_path)?;
-            let entry = InstalledPlugin {
-                name: p.name.clone(),
-                marketplace: p.marketplace.clone(),
-                marketplace_source: p.marketplace_source.clone(),
-                source: p.source.clone(),
-                local_path: local_path.to_string_lossy().to_string(),
-                version: p.version.clone(),
-                permissions: p.permissions.clone(),
-                scope: scope.clone(),
-            };
-            upsert_installed(state, entry.clone());
+            let entry = install_entry(state, &p, scope.clone())?;
             audit(
                 "install",
                 serde_json::json!({"plugin": entry.name, "marketplace": entry.marketplace}),
@@ -130,19 +139,7 @@ pub fn handle_runtime_commands(
             let (name, market) = parse_target(target);
             let p = show_plugin(all_markets, &name, market.as_deref(), policy)?;
             enforce_policy_for_plugin(policy, &p)?;
-            let source_path = rack::resolve_plugin_path(&p.marketplace_source, &p.source)?;
-            let local_path = materialize_plugin(&p.name, &source_path)?;
-            let entry = InstalledPlugin {
-                name: p.name.clone(),
-                marketplace: p.marketplace.clone(),
-                marketplace_source: p.marketplace_source.clone(),
-                source: p.source.clone(),
-                local_path: local_path.to_string_lossy().to_string(),
-                version: p.version.clone(),
-                permissions: p.permissions.clone(),
-                scope: scope.clone(),
-            };
-            upsert_installed(state, entry.clone());
+            let entry = install_entry(state, &p, scope.clone())?;
             save_state(state)?;
             save_lockfile(state)?;
             sync_installed(state, target_adapter.clone())?;
@@ -378,19 +375,7 @@ pub fn handle_runtime_commands(
             let (name, market) = parse_target(&target);
             let p = show_plugin(all_markets, &name, market.as_deref(), policy)?;
             enforce_policy_for_plugin(policy, &p)?;
-            let source_path = rack::resolve_plugin_path(&p.marketplace_source, &p.source)?;
-            let local_path = materialize_plugin(&p.name, &source_path)?;
-            let entry = InstalledPlugin {
-                name: p.name.clone(),
-                marketplace: p.marketplace.clone(),
-                marketplace_source: p.marketplace_source.clone(),
-                source: p.source.clone(),
-                local_path: local_path.to_string_lossy().to_string(),
-                version: p.version.clone(),
-                permissions: p.permissions.clone(),
-                scope: InstallScope::User,
-            };
-            upsert_installed(state, entry.clone());
+            let entry = install_entry(state, &p, InstallScope::User)?;
             save_state(state)?;
             save_lockfile(state)?;
             sync_installed(state, agent.clone())?;

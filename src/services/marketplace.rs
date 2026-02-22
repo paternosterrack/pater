@@ -11,6 +11,24 @@ use crate::services::trust::verify_marketplace_signature;
 use std::collections::HashSet;
 use std::path::PathBuf;
 
+fn discover_item_from_plugin(
+    marketplace_name: &str,
+    marketplace_source: &str,
+    plugin: &rack::Plugin,
+) -> DiscoverItem {
+    DiscoverItem {
+        marketplace: marketplace_name.to_string(),
+        marketplace_source: marketplace_source.to_string(),
+        name: plugin.name.clone(),
+        description: plugin.description.clone().unwrap_or_default(),
+        version: plugin.version.clone(),
+        source: plugin.source.clone(),
+        distribution: plugin.distribution.clone(),
+        license_status: plugin.license_status.clone(),
+        permissions: plugin.permissions.clone(),
+    }
+}
+
 pub fn load_policy() -> anyhow::Result<PolicyFile> {
     let home = std::env::var("HOME")?;
     let path = PathBuf::from(home).join(".config/pater/policy.toml");
@@ -32,7 +50,7 @@ pub fn update_plugins(
 ) -> anyhow::Result<Vec<UpdateReport>> {
     let mut reports = Vec::new();
     for installed in &mut state.installed {
-        if only.map(|o| o != installed.name).unwrap_or(false) {
+        if only.is_some_and(|name| name != installed.name) {
             continue;
         }
         let latest = show_plugin(
@@ -124,17 +142,7 @@ pub fn discover_across(
             continue;
         };
         for p in rack::discover(&loaded, query) {
-            out.push(DiscoverItem {
-                marketplace: loaded.name.clone(),
-                marketplace_source: m.source.clone(),
-                name: p.name.clone(),
-                description: p.description.clone().unwrap_or_default(),
-                version: p.version.clone(),
-                source: p.source.clone(),
-                distribution: p.distribution.clone(),
-                license_status: p.license_status.clone(),
-                permissions: p.permissions.clone(),
-            });
+            out.push(discover_item_from_plugin(&loaded.name, &m.source, p));
         }
     }
     Ok(out)
@@ -191,23 +199,11 @@ pub fn show_plugin(
         let Ok(loaded) = checked_load_marketplace(&m.source, policy) else {
             continue;
         };
-        if let Some(filter) = marketplace {
-            if loaded.name != filter {
-                continue;
-            }
+        if marketplace.is_some_and(|filter| loaded.name != filter) {
+            continue;
         }
         if let Ok(p) = rack::show(&loaded, name) {
-            return Ok(DiscoverItem {
-                marketplace: loaded.name.clone(),
-                marketplace_source: m.source.clone(),
-                name: p.name.clone(),
-                description: p.description.clone().unwrap_or_default(),
-                version: p.version.clone(),
-                source: p.source.clone(),
-                distribution: p.distribution.clone(),
-                license_status: p.license_status.clone(),
-                permissions: p.permissions.clone(),
-            });
+            return Ok(discover_item_from_plugin(&loaded.name, &m.source, p));
         }
     }
     anyhow::bail!("plugin not found: {}", name)

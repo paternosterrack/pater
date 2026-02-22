@@ -4,6 +4,13 @@ use crate::rack;
 use std::collections::HashSet;
 use std::path::PathBuf;
 
+fn check_exists(name: &str, path: PathBuf) -> CheckItem {
+    CheckItem {
+        name: name.to_string(),
+        status: if path.exists() { "ok" } else { "missing" }.to_string(),
+    }
+}
+
 fn adapter_base(target: &AdapterTarget) -> anyhow::Result<PathBuf> {
     let home = std::env::var("HOME")?;
     let p = match target {
@@ -95,6 +102,7 @@ pub fn adapter_smoke(state: &State, target: AdapterTarget) -> anyhow::Result<Vec
     };
 
     let mut out = Vec::new();
+    let home = std::env::var("HOME").ok();
     for t in targets {
         let base = adapter_base(&t)?;
         let mut missing = Vec::new();
@@ -104,21 +112,19 @@ pub fn adapter_smoke(state: &State, target: AdapterTarget) -> anyhow::Result<Vec
             }
         }
 
-        let shim_ok = match t {
-            AdapterTarget::Claude => std::env::var("HOME")
-                .map(|h| PathBuf::from(h).join(".claude/pater.plugins.json").exists())
-                .unwrap_or(false),
-            AdapterTarget::Codex => std::env::var("HOME")
-                .map(|h| PathBuf::from(h).join(".codex/pater.plugins.json").exists())
-                .unwrap_or(false),
-            AdapterTarget::Openclaw => std::env::var("HOME")
-                .map(|h| {
-                    PathBuf::from(h)
-                        .join(".openclaw/workspace/skills/.pater-index.json")
-                        .exists()
-                })
-                .unwrap_or(false),
-            AdapterTarget::All => true,
+        let shim_ok = if let Some(home) = &home {
+            match t {
+                AdapterTarget::Claude => PathBuf::from(home).join(".claude/pater.plugins.json"),
+                AdapterTarget::Codex => PathBuf::from(home).join(".codex/pater.plugins.json"),
+                AdapterTarget::Openclaw => {
+                    PathBuf::from(home).join(".openclaw/workspace/skills/.pater-index.json")
+                }
+                AdapterTarget::All => PathBuf::new(),
+            }
+            .exists()
+                || matches!(t, AdapterTarget::All)
+        } else {
+            false
         };
 
         let status = if missing.is_empty() && shim_ok {
@@ -144,66 +150,33 @@ pub fn adapter_doctor(state: &State) -> anyhow::Result<DoctorReport> {
     let smoke = adapter_smoke(state, AdapterTarget::All)?;
 
     let configs = vec![
-        CheckItem {
-            name: "claude_settings".to_string(),
-            status: if PathBuf::from(&home).join(".claude/settings.json").exists() {
-                "ok".to_string()
-            } else {
-                "missing".to_string()
-            },
-        },
-        CheckItem {
-            name: "codex_config".to_string(),
-            status: if PathBuf::from(&home).join(".codex/config.toml").exists() {
-                "ok".to_string()
-            } else {
-                "missing".to_string()
-            },
-        },
-        CheckItem {
-            name: "openclaw_index".to_string(),
-            status: if PathBuf::from(&home)
-                .join(".openclaw/workspace/skills/.pater-index.json")
-                .exists()
-            {
-                "ok".to_string()
-            } else {
-                "missing".to_string()
-            },
-        },
+        check_exists(
+            "claude_settings",
+            PathBuf::from(&home).join(".claude/settings.json"),
+        ),
+        check_exists(
+            "codex_config",
+            PathBuf::from(&home).join(".codex/config.toml"),
+        ),
+        check_exists(
+            "openclaw_index",
+            PathBuf::from(&home).join(".openclaw/workspace/skills/.pater-index.json"),
+        ),
     ];
 
     let wrappers = vec![
-        CheckItem {
-            name: "pater-claude".to_string(),
-            status: if PathBuf::from(&home)
-                .join(".local/bin/pater-claude")
-                .exists()
-            {
-                "ok".to_string()
-            } else {
-                "missing".to_string()
-            },
-        },
-        CheckItem {
-            name: "pater-codex".to_string(),
-            status: if PathBuf::from(&home).join(".local/bin/pater-codex").exists() {
-                "ok".to_string()
-            } else {
-                "missing".to_string()
-            },
-        },
-        CheckItem {
-            name: "pater-openclaw".to_string(),
-            status: if PathBuf::from(&home)
-                .join(".local/bin/pater-openclaw")
-                .exists()
-            {
-                "ok".to_string()
-            } else {
-                "missing".to_string()
-            },
-        },
+        check_exists(
+            "pater-claude",
+            PathBuf::from(&home).join(".local/bin/pater-claude"),
+        ),
+        check_exists(
+            "pater-codex",
+            PathBuf::from(&home).join(".local/bin/pater-codex"),
+        ),
+        check_exists(
+            "pater-openclaw",
+            PathBuf::from(&home).join(".local/bin/pater-openclaw"),
+        ),
     ];
 
     let path_has_local_bin = std::env::var("PATH")
